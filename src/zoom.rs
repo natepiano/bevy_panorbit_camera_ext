@@ -269,8 +269,13 @@ pub fn zoom_to_fit_convergence_system(
 
         // Calculate target focus and radius
         let current_radius = pan_orbit.target_radius;
-        let target_focus =
-            calculate_target_focus(pan_orbit.target_focus, current_radius, &bounds, cam_global);
+        let target_focus = calculate_target_focus(
+            pan_orbit.target_focus,
+            current_radius,
+            &bounds,
+            cam_global,
+            &zoom_state.target_corners,
+        );
         let (span_x, span_y) = bounds.span();
         let target_radius =
             calculate_target_radius(current_radius, span_x, span_y, &bounds, &zoom_config);
@@ -300,6 +305,13 @@ pub fn zoom_to_fit_convergence_system(
         let fitted = bounds.is_fitted(zoom_config.margin_tolerance);
 
         if balanced && fitted {
+            // Synchronize current values with target values to prevent interpolation
+            // artifacts when smoothness is restored after convergence
+            pan_orbit.focus = pan_orbit.target_focus;
+            pan_orbit.radius = Some(pan_orbit.target_radius);
+            pan_orbit.yaw = Some(pan_orbit.target_yaw);
+            pan_orbit.pitch = Some(pan_orbit.target_pitch);
+
             commands.entity(entity).remove::<ZoomToFitComponent>();
             continue;
         }
@@ -319,8 +331,10 @@ fn calculate_target_focus(
     current_radius: f32,
     bounds: &ScreenSpaceBounds,
     cam_global: &GlobalTransform,
+    corners: &[Vec3; 8],
 ) -> Vec3 {
-    let corners_center = Vec3::ZERO; // Assuming we want to center on the origin
+    // Calculate actual center of the bounding box corners
+    let corners_center = corners.iter().sum::<Vec3>() / 8.0;
     let focus_to_center_distance = current_focus.distance(corners_center);
     let far_from_center_threshold = current_radius * 0.5;
 
@@ -339,7 +353,8 @@ fn calculate_target_focus(
         let world_offset_y = center_y * bounds.avg_depth;
         let focus_correction = cam_right * world_offset_x + cam_up * world_offset_y;
 
-        current_focus + focus_correction
+        // Apply only 30% of correction per frame to prevent oscillation
+        current_focus + focus_correction * 0.3
     }
 }
 
