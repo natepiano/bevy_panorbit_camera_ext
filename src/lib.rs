@@ -14,8 +14,8 @@ mod zoom;
 
 pub use animation::{CameraMove, CameraMoveList, process_camera_move_list};
 pub use extension::{
-    PanOrbitCameraExt, SnapToFit, StartAnimation, ZoomToFit, ZoomToFitConfig, ZoomToFitMesh,
-    auto_add_zoom_config, on_snap_to_fit, on_start_animation, on_zoom_to_fit, on_zoom_to_fit_mesh,
+    PanOrbitCameraExt, SnapToFit, StartAnimation, ZoomToFit, ZoomToFitConfig, auto_add_zoom_config,
+    on_snap_to_fit, on_start_animation, on_zoom_to_fit,
 };
 pub use smoothness::{
     SmoothnessStash, restore_smoothness_on_move_complete, restore_smoothness_on_zoom_complete,
@@ -38,7 +38,6 @@ impl Plugin for CameraExtPlugin {
             // Register observers for custom events
             .add_observer(on_snap_to_fit)
             .add_observer(on_zoom_to_fit)
-            .add_observer(on_zoom_to_fit_mesh)
             .add_observer(on_start_animation)
             // Add systems
             .add_systems(

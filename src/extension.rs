@@ -8,7 +8,7 @@ use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::animation::{CameraMove, CameraMoveList};
 use crate::smoothness::SmoothnessStash;
-use crate::zoom::{ZoomConfig, ZoomToFitComponent, compute_bounding_corners};
+use crate::zoom::{ZoomConfig, ZoomToFitComponent};
 
 /// Configuration for zoom-to-fit behavior
 #[derive(Component, Debug, Clone)]
@@ -68,16 +68,16 @@ impl PanOrbitCameraExt for PanOrbitCamera {
 // Entity Events
 // ============================================================================
 
-/// Event to instantly snap camera to frame a target transform
+/// Event to instantly snap camera to frame a target entity
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event)]
 pub struct SnapToFit {
     pub entity: Entity,
-    pub target: Transform,
+    pub target: Entity,
 }
 
 impl SnapToFit {
-    pub const fn new(entity: Entity, target: Transform) -> Self {
+    pub const fn new(entity: Entity, target: Entity) -> Self {
         Self { entity, target }
     }
 }
@@ -87,32 +87,12 @@ impl SnapToFit {
 #[reflect(Event)]
 pub struct ZoomToFit {
     pub entity: Entity,
-    pub target: Transform,
+    pub target: Entity,
 }
 
 impl ZoomToFit {
-    pub const fn new(entity: Entity, target: Transform) -> Self {
+    pub const fn new(entity: Entity, target: Entity) -> Self {
         Self { entity, target }
-    }
-}
-
-/// Event to zoom camera to fit a mesh entity.
-///
-/// Provide an entity that has a `Mesh3d` component (or a descendant with `Mesh3d`).
-/// The system will find the mesh's `Aabb` and frame it in the camera view.
-#[derive(EntityEvent, Reflect)]
-#[reflect(Event)]
-pub struct ZoomToFitMesh {
-    pub entity: Entity,
-    pub target_entity: Entity,
-}
-
-impl ZoomToFitMesh {
-    pub const fn new(entity: Entity, target_entity: Entity) -> Self {
-        Self {
-            entity,
-            target_entity,
-        }
     }
 }
 
@@ -149,14 +129,19 @@ pub fn auto_add_zoom_config(
 }
 
 /// Observer for SnapToFit event - instantly positions camera to frame the target
+/// Requires target entity to have an Aabb (direct or on descendants)
 pub fn on_snap_to_fit(
     snap: On<SnapToFit>,
     mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera)>,
+    aabb_query: Query<&Aabb>,
+    children_query: Query<&Children>,
+    global_transform_query: Query<&GlobalTransform>,
     zoom_config: Res<ZoomConfig>,
 ) {
-    let entity = snap.entity;
+    let camera_entity = snap.entity;
+    let target_entity = snap.target;
 
-    let Ok((mut camera, projection, cam)) = camera_query.get_mut(entity) else {
+    let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
         return;
     };
 
@@ -164,14 +149,27 @@ pub fn on_snap_to_fit(
         return;
     };
 
-    // Compute corners from target transform (same as zoom-to-fit)
-    let corners = compute_bounding_corners(&snap.target);
+    // Find Aabb (direct or descendants)
+    let Some((aabb_entity, aabb)) =
+        find_descendant_aabb(target_entity, &children_query, &aabb_query)
+    else {
+        warn!("SnapToFit: No Aabb found on entity {target_entity:?} or its descendants");
+        return;
+    };
+
+    let Ok(global_transform) = global_transform_query.get(aabb_entity) else {
+        warn!("No GlobalTransform found for Aabb entity");
+        return;
+    };
+
+    let corners = aabb_to_world_corners(aabb, global_transform);
+    let focus = global_transform.translation();
 
     // Calculate radius using convergence from canonical position (focus at target, yaw=0, pitch=0)
     let Some(radius) = calculate_convergence_radius(
         &corners,
         camera.target_radius,
-        snap.target.translation,
+        focus,
         perspective,
         cam.logical_viewport_size(),
         &zoom_config,
@@ -180,7 +178,7 @@ pub fn on_snap_to_fit(
     };
 
     // Set camera to look at target center with calculated radius
-    camera.target_focus = snap.target.translation;
+    camera.target_focus = focus;
     camera.target_yaw = 0.0;
     camera.target_pitch = 0.0;
     camera.target_radius = radius;
@@ -248,49 +246,23 @@ fn calculate_convergence_radius(
 }
 
 /// Observer for ZoomToFit event - initiates smooth zoom-to-fit
+/// Requires target entity to have an Aabb (direct or on descendants)
 pub fn on_zoom_to_fit(
     zoom: On<ZoomToFit>,
     mut commands: Commands,
     mut camera_query: Query<&mut PanOrbitCamera>,
-) {
-    let entity = zoom.entity;
-
-    let Ok(mut camera) = camera_query.get_mut(entity) else {
-        return;
-    };
-
-    // Stash and disable smoothness for precise convergence
-    let stash = camera.stash_and_disable_smoothness();
-    commands.entity(entity).insert(stash);
-
-    // Compute bounding corners from the target transform
-    let corners = compute_bounding_corners(&zoom.target);
-
-    // Add ZoomToFitComponent (will be processed by zoom_to_fit_convergence_system)
-    commands.entity(entity).insert(ZoomToFitComponent {
-        target_corners: corners,
-        iteration_count: 0,
-        final_target_focus: None,
-    });
-}
-
-/// Observer for ZoomToFitMesh event - zooms to fit a mesh entity by finding its `Aabb`
-pub fn on_zoom_to_fit_mesh(
-    zoom: On<ZoomToFitMesh>,
-    mut commands: Commands,
-    mut camera_query: Query<&mut PanOrbitCamera>,
-    children_query: Query<&Children>,
     aabb_query: Query<&Aabb>,
+    children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
 ) {
     let camera_entity = zoom.entity;
-    let target_entity = zoom.target_entity;
+    let target_entity = zoom.target;
 
-    // Find Aabb in target or its descendants
+    // Find Aabb (direct or descendants)
     let Some((aabb_entity, aabb)) =
         find_descendant_aabb(target_entity, &children_query, &aabb_query)
     else {
-        warn!("No Aabb found on entity {target_entity:?} or its descendants");
+        warn!("ZoomToFit: No Aabb found on entity {target_entity:?} or its descendants");
         return;
     };
 
@@ -299,17 +271,18 @@ pub fn on_zoom_to_fit_mesh(
         return;
     };
 
-    // Convert Aabb to 8 world-space corners
     let corners = aabb_to_world_corners(aabb, global_transform);
 
-    // Stash and disable smoothness (same as ZoomToFit)
+    // Common setup
     let Ok(mut camera) = camera_query.get_mut(camera_entity) else {
         return;
     };
+
+    // Stash and disable smoothness for precise convergence
     let stash = camera.stash_and_disable_smoothness();
     commands.entity(camera_entity).insert(stash);
 
-    // Reuse existing convergence system
+    // Add ZoomToFitComponent (will be processed by zoom_to_fit_convergence_system)
     commands.entity(camera_entity).insert(ZoomToFitComponent {
         target_corners: corners,
         iteration_count: 0,
