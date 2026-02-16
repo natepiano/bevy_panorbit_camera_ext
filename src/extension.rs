@@ -270,6 +270,7 @@ pub fn on_zoom_to_fit(
     commands.entity(entity).insert(ZoomToFitComponent {
         target_corners: corners,
         iteration_count: 0,
+        final_target_focus: None,
     });
 }
 
@@ -312,6 +313,7 @@ pub fn on_zoom_to_fit_mesh(
     commands.entity(camera_entity).insert(ZoomToFitComponent {
         target_corners: corners,
         iteration_count: 0,
+        final_target_focus: None,
     });
 }
 

@@ -41,6 +41,8 @@ impl ZoomConfig {
 pub struct ZoomToFitComponent {
     pub target_corners: [Vec3; 8],
     pub iteration_count: usize,
+    /// Final target focus calculated once at convergence start
+    pub final_target_focus: Option<Vec3>,
 }
 
 /// Screen edge identifier
@@ -267,21 +269,22 @@ pub fn zoom_to_fit_convergence_system(
             continue;
         };
 
-        // Calculate target focus and radius
+        // Calculate final target focus once on first iteration
+        if zoom_state.final_target_focus.is_none() {
+            let corners_center = zoom_state.target_corners.iter().sum::<Vec3>() / 8.0;
+            zoom_state.final_target_focus = Some(corners_center);
+        }
+
+        let final_target_focus = zoom_state.final_target_focus.unwrap();
+
+        // Calculate target radius (this changes based on current view)
         let current_radius = pan_orbit.target_radius;
-        let target_focus = calculate_target_focus(
-            pan_orbit.target_focus,
-            current_radius,
-            &bounds,
-            cam_global,
-            &zoom_state.target_corners,
-        );
         let (span_x, span_y) = bounds.span();
         let target_radius =
             calculate_target_radius(current_radius, span_x, span_y, &bounds, &zoom_config);
 
-        // Calculate deltas
-        let focus_delta = target_focus - pan_orbit.target_focus;
+        // Calculate deltas - focus moves toward final target, radius toward calculated target
+        let focus_delta = final_target_focus - pan_orbit.target_focus;
         let radius_delta = target_radius - current_radius;
 
         // Adaptive convergence rate: faster for small adjustments, slower for large changes
@@ -322,39 +325,6 @@ pub fn zoom_to_fit_convergence_system(
         if zoom_state.iteration_count >= zoom_config.max_iterations {
             commands.entity(entity).remove::<ZoomToFitComponent>();
         }
-    }
-}
-
-/// Calculates the target focus point using a two-phase approach
-fn calculate_target_focus(
-    current_focus: Vec3,
-    current_radius: f32,
-    bounds: &ScreenSpaceBounds,
-    cam_global: &GlobalTransform,
-    corners: &[Vec3; 8],
-) -> Vec3 {
-    // Calculate actual center of the bounding box corners
-    let corners_center = corners.iter().sum::<Vec3>() / 8.0;
-    let focus_to_center_distance = current_focus.distance(corners_center);
-    let far_from_center_threshold = current_radius * 0.5;
-
-    if focus_to_center_distance > far_from_center_threshold {
-        // Phase 1: Move toward center
-        corners_center
-    } else {
-        // Phase 2: Fine-tune using screen-space centering
-        let (center_x, center_y) = bounds.center();
-        let cam_rot = cam_global.rotation();
-        let cam_right = cam_rot * Vec3::X;
-        let cam_up = cam_rot * Vec3::Y;
-
-        // Convert screen-space offset to world-space adjustment
-        let world_offset_x = center_x * bounds.avg_depth;
-        let world_offset_y = center_y * bounds.avg_depth;
-        let focus_correction = cam_right * world_offset_x + cam_up * world_offset_y;
-
-        // Apply only 30% of correction per frame to prevent oscillation
-        current_focus + focus_correction * 0.3
     }
 }
 
