@@ -6,9 +6,11 @@ use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
-use crate::animation::{CameraMove, CameraMoveList};
+use crate::animation::CameraMove;
+use crate::animation::CameraMoveList;
 use crate::smoothness::SmoothnessStash;
-use crate::zoom::{ZoomConfig, ZoomToFitComponent};
+use crate::zoom::ZoomConfig;
+use crate::zoom::ZoomToFitComponent;
 
 /// Configuration for zoom-to-fit behavior
 #[derive(Component, Debug, Clone)]
@@ -17,10 +19,14 @@ pub struct ZoomToFitConfig {
     pub padding: f32,
 }
 
+/// Marks the entity that the camera is currently fitted to.
+/// Persists after fit completes to enable persistent visualization.
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+pub struct CurrentFitTarget(pub Entity);
+
 impl Default for ZoomToFitConfig {
-    fn default() -> Self {
-        Self { padding: 1.2 }
-    }
+    fn default() -> Self { Self { padding: 1.2 } }
 }
 
 /// Extension trait for `PanOrbitCamera` providing convenience methods.
@@ -51,8 +57,8 @@ impl PanOrbitCameraExt for PanOrbitCamera {
 
     fn stash_and_disable_smoothness(&mut self) -> SmoothnessStash {
         let stash = SmoothnessStash {
-            zoom: self.zoom_smoothness,
-            pan: self.pan_smoothness,
+            zoom:  self.zoom_smoothness,
+            pan:   self.pan_smoothness,
             orbit: self.orbit_smoothness,
         };
 
@@ -77,9 +83,7 @@ pub struct SnapToFit {
 }
 
 impl SnapToFit {
-    pub const fn new(entity: Entity, target: Entity) -> Self {
-        Self { entity, target }
-    }
+    pub const fn new(entity: Entity, target: Entity) -> Self { Self { entity, target } }
 }
 
 /// Event to smoothly animate camera to frame a target transform
@@ -91,9 +95,7 @@ pub struct ZoomToFit {
 }
 
 impl ZoomToFit {
-    pub const fn new(entity: Entity, target: Entity) -> Self {
-        Self { entity, target }
-    }
+    pub const fn new(entity: Entity, target: Entity) -> Self { Self { entity, target } }
 }
 
 /// Event to start a queued camera animation
@@ -101,13 +103,11 @@ impl ZoomToFit {
 #[reflect(Event)]
 pub struct StartAnimation {
     pub entity: Entity,
-    pub moves: VecDeque<CameraMove>,
+    pub moves:  VecDeque<CameraMove>,
 }
 
 impl StartAnimation {
-    pub const fn new(entity: Entity, moves: VecDeque<CameraMove>) -> Self {
-        Self { entity, moves }
-    }
+    pub const fn new(entity: Entity, moves: VecDeque<CameraMove>) -> Self { Self { entity, moves } }
 }
 
 // ============================================================================
@@ -128,10 +128,51 @@ pub fn auto_add_zoom_config(
     }
 }
 
+/// Calculates the optimal radius to fit a target entity in the camera view.
+/// Uses the convergence algorithm from a canonical camera position (yaw=0, pitch=0).
+/// This is useful for pre-calculating camera positions (e.g., for animations that should
+/// end at the same position as SnapToFit or ZoomToFit).
+///
+/// Returns `Some(radius)` if the calculation succeeds, `None` if the target has no Aabb
+/// or if the calculation fails.
+pub fn calculate_fit_radius(
+    target_entity: Entity,
+    current_radius: f32,
+    projection: &Projection,
+    camera: &Camera,
+    aabb_query: &Query<&Aabb>,
+    children_query: &Query<&Children>,
+    global_transform_query: &Query<&GlobalTransform>,
+    zoom_config: &ZoomConfig,
+) -> Option<f32> {
+    let Projection::Perspective(perspective) = projection else {
+        return None;
+    };
+
+    // Find Aabb (direct or descendants)
+    let (aabb_entity, aabb) = find_descendant_aabb(target_entity, children_query, aabb_query)?;
+
+    let global_transform = global_transform_query.get(aabb_entity).ok()?;
+
+    let corners = aabb_to_world_corners(aabb, global_transform);
+    let focus = global_transform.translation();
+
+    // Calculate radius using convergence from canonical position
+    calculate_convergence_radius(
+        &corners,
+        current_radius,
+        focus,
+        perspective,
+        camera.logical_viewport_size(),
+        zoom_config,
+    )
+}
+
 /// Observer for SnapToFit event - instantly positions camera to frame the target
 /// Requires target entity to have an Aabb (direct or on descendants)
 pub fn on_snap_to_fit(
     snap: On<SnapToFit>,
+    mut commands: Commands,
     mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera)>,
     aabb_query: Query<&Aabb>,
     children_query: Query<&Children>,
@@ -145,37 +186,32 @@ pub fn on_snap_to_fit(
         return;
     };
 
-    let Projection::Perspective(perspective) = projection else {
+    // Use the public calculation function
+    let Some(radius) = calculate_fit_radius(
+        target_entity,
+        camera.target_radius,
+        projection,
+        cam,
+        &aabb_query,
+        &children_query,
+        &global_transform_query,
+        &zoom_config,
+    ) else {
+        warn!("SnapToFit: Failed to calculate radius for entity {target_entity:?}");
         return;
     };
 
-    // Find Aabb (direct or descendants)
-    let Some((aabb_entity, aabb)) =
-        find_descendant_aabb(target_entity, &children_query, &aabb_query)
+    // Get the focus point
+    let Some((aabb_entity, _)) = find_descendant_aabb(target_entity, &children_query, &aabb_query)
     else {
-        warn!("SnapToFit: No Aabb found on entity {target_entity:?} or its descendants");
         return;
     };
 
     let Ok(global_transform) = global_transform_query.get(aabb_entity) else {
-        warn!("No GlobalTransform found for Aabb entity");
         return;
     };
 
-    let corners = aabb_to_world_corners(aabb, global_transform);
     let focus = global_transform.translation();
-
-    // Calculate radius using convergence from canonical position (focus at target, yaw=0, pitch=0)
-    let Some(radius) = calculate_convergence_radius(
-        &corners,
-        camera.target_radius,
-        focus,
-        perspective,
-        cam.logical_viewport_size(),
-        &zoom_config,
-    ) else {
-        return;
-    };
 
     // Set camera to look at target center with calculated radius
     camera.target_focus = focus;
@@ -183,6 +219,11 @@ pub fn on_snap_to_fit(
     camera.target_pitch = 0.0;
     camera.target_radius = radius;
     camera.force_update = true;
+
+    // Mark current fit target for visualization
+    commands
+        .entity(camera_entity)
+        .insert(CurrentFitTarget(target_entity));
 }
 
 /// Calculates the radius needed to fit corners in view using the convergence algorithm.
@@ -284,14 +325,19 @@ pub fn on_zoom_to_fit(
 
     // Add ZoomToFitComponent (will be processed by zoom_to_fit_convergence_system)
     commands.entity(camera_entity).insert(ZoomToFitComponent {
-        target_corners: corners,
-        iteration_count: 0,
+        target_corners:     corners,
+        iteration_count:    0,
         final_target_focus: None,
     });
+
+    // Mark current fit target for visualization
+    commands
+        .entity(camera_entity)
+        .insert(CurrentFitTarget(target_entity));
 }
 
 /// Recursively searches for an `Aabb` component on an entity or its descendants
-fn find_descendant_aabb<'a>(
+pub fn find_descendant_aabb<'a>(
     entity: Entity,
     children_query: &Query<&Children>,
     aabb_query: &'a Query<&Aabb>,
@@ -314,7 +360,7 @@ fn find_descendant_aabb<'a>(
 }
 
 /// Converts an `Aabb` to 8 corners in world space
-fn aabb_to_world_corners(aabb: &Aabb, global_transform: &GlobalTransform) -> [Vec3; 8] {
+pub fn aabb_to_world_corners(aabb: &Aabb, global_transform: &GlobalTransform) -> [Vec3; 8] {
     let center = Vec3::from(aabb.center);
     let half_extents = Vec3::from(aabb.half_extents);
 

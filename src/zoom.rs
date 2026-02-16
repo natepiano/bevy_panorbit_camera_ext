@@ -8,9 +8,9 @@ use bevy_panorbit_camera::PanOrbitCamera;
 #[reflect(Resource)]
 pub struct ZoomConfig {
     /// Maximum iterations before giving up
-    pub max_iterations: usize,
+    pub max_iterations:   usize,
     /// Margin as fraction of screen (0.1 = 10% margin on each side)
-    pub margin: f32,
+    pub margin:           f32,
     /// Margin tolerance for convergence detection
     pub margin_tolerance: f32,
     /// Convergence rate for adjustments (0.30 = 30% per frame)
@@ -20,8 +20,8 @@ pub struct ZoomConfig {
 impl Default for ZoomConfig {
     fn default() -> Self {
         Self {
-            max_iterations: 200,
-            margin: 0.1,
+            max_iterations:   200,
+            margin:           0.1,
             margin_tolerance: 0.00001,
             convergence_rate: 0.30,
         }
@@ -31,16 +31,14 @@ impl Default for ZoomConfig {
 impl ZoomConfig {
     /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
     /// For example, a margin of 0.08 returns 1.087 (8% margin)
-    pub const fn zoom_margin_multiplier(&self) -> f32 {
-        1.0 / (1.0 - self.margin)
-    }
+    pub const fn zoom_margin_multiplier(&self) -> f32 { 1.0 / (1.0 - self.margin) }
 }
 
 /// Component that marks a camera as actively performing zoom-to-fit convergence
 #[derive(Component, Debug)]
 pub struct ZoomToFitComponent {
-    pub target_corners: [Vec3; 8],
-    pub iteration_count: usize,
+    pub target_corners:     [Vec3; 8],
+    pub iteration_count:    usize,
     /// Final target focus calculated once at convergence start
     pub final_target_focus: Option<Vec3>,
 }
@@ -58,31 +56,31 @@ pub enum Edge {
 #[derive(Debug, Clone)]
 pub struct ScreenSpaceBounds {
     /// Distance from left edge (positive = inside, negative = outside)
-    pub left_margin: f32,
+    pub left_margin:     f32,
     /// Distance from right edge (positive = inside, negative = outside)
-    pub right_margin: f32,
+    pub right_margin:    f32,
     /// Distance from top edge (positive = inside, negative = outside)
-    pub top_margin: f32,
+    pub top_margin:      f32,
     /// Distance from bottom edge (positive = inside, negative = outside)
-    pub bottom_margin: f32,
+    pub bottom_margin:   f32,
     /// Target margin for horizontal (in screen-space units)
     pub target_margin_x: f32,
     /// Target margin for vertical (in screen-space units)
     pub target_margin_y: f32,
     /// Minimum normalized x coordinate in screen space
-    pub min_norm_x: f32,
+    pub min_norm_x:      f32,
     /// Maximum normalized x coordinate in screen space
-    pub max_norm_x: f32,
+    pub max_norm_x:      f32,
     /// Minimum normalized y coordinate in screen space
-    pub min_norm_y: f32,
+    pub min_norm_y:      f32,
     /// Maximum normalized y coordinate in screen space
-    pub max_norm_y: f32,
+    pub max_norm_y:      f32,
     /// Average depth of boundary corners from camera
-    pub avg_depth: f32,
+    pub avg_depth:       f32,
     /// Half tangent of vertical field of view
-    pub half_tan_vfov: f32,
+    pub half_tan_vfov:   f32,
     /// Half tangent of horizontal field of view (vfov * aspect_ratio)
-    pub half_tan_hfov: f32,
+    pub half_tan_hfov:   f32,
 }
 
 impl ScreenSpaceBounds {
@@ -204,26 +202,6 @@ impl ScreenSpaceBounds {
         let span_y = self.max_norm_y - self.min_norm_y;
         (span_x, span_y)
     }
-}
-
-/// Computes the 8 corners of a bounding box from a transform.
-/// For a transform centered at the origin with only scale, returns corners in local space.
-/// For a transform with translation/rotation, returns corners in world space.
-pub fn compute_bounding_corners(transform: &Transform) -> [Vec3; 8] {
-    // Create unit cube corners (before scaling)
-    let unit_corners = [
-        Vec3::new(-0.5, -0.5, -0.5),
-        Vec3::new(0.5, -0.5, -0.5),
-        Vec3::new(-0.5, 0.5, -0.5),
-        Vec3::new(0.5, 0.5, -0.5),
-        Vec3::new(-0.5, -0.5, 0.5),
-        Vec3::new(0.5, -0.5, 0.5),
-        Vec3::new(-0.5, 0.5, 0.5),
-        Vec3::new(0.5, 0.5, 0.5),
-    ];
-
-    // Transform unit corners to world space (applies translation, rotation, AND scale)
-    unit_corners.map(|corner| transform.transform_point(corner))
 }
 
 /// System that performs iterative zoom-to-fit convergence

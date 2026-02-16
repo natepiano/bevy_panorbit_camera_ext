@@ -30,8 +30,8 @@ App::new()
     .add_plugins(CameraExtPlugin)
     .run();
 
-// Zoom to frame a mesh
-commands.trigger_targets(ZoomToFitMesh { target }, camera);
+// Zoom to frame an entity with Aabb
+commands.trigger_targets(ZoomToFit { target: entity }, camera);
 
 // Animate camera movement
 commands.trigger_targets(
@@ -46,9 +46,8 @@ commands.trigger_targets(
 
 ## Events
 
-- `SnapToFit` - Instantly position camera
-- `ZoomToFit` - Smooth zoom to bounding box
-- `ZoomToFitMesh` - Smooth zoom to mesh
+- `SnapToFit` - Instantly position camera to frame entity
+- `ZoomToFit` - Smooth zoom to frame entity with Aabb
 - `StartAnimation` - Queue camera movements
 
 ## Compatibility

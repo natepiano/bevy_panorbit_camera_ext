@@ -12,20 +12,20 @@ use bevy_panorbit_camera::PanOrbitCamera;
 #[derive(Clone, Reflect)]
 pub struct CameraMove {
     pub target_translation: Vec3, // Where to position the camera in world space
-    pub target_focus: Vec3,       // What point the camera should look at
-    pub duration_ms: f32,         // Duration in milliseconds to complete this move
-    pub easing: EaseFunction,     // Easing function for this move
+    pub target_focus:       Vec3, // What point the camera should look at
+    pub duration_ms:        f32,  // Duration in milliseconds to complete this move
+    pub easing:             EaseFunction, // Easing function for this move
 }
 
 /// State tracking for the current camera movement
 #[derive(Clone, Reflect, Default, Debug)]
 enum MoveState {
     InProgress {
-        elapsed_ms: f32,
-        start_focus: Vec3,
-        start_pitch: f32,
+        elapsed_ms:   f32,
+        start_focus:  Vec3,
+        start_pitch:  f32,
         start_radius: f32,
-        start_yaw: f32,
+        start_yaw:    f32,
     },
     #[default]
     Ready,
@@ -43,7 +43,7 @@ enum MoveState {
 #[reflect(Component, Default)]
 pub struct CameraMoveList {
     pub moves: VecDeque<CameraMove>,
-    state: MoveState,
+    state:     MoveState,
 }
 
 impl CameraMoveList {
@@ -64,7 +64,7 @@ impl CameraMoveList {
                 } else {
                     0.0
                 }
-            }
+            },
             MoveState::Ready => self.moves.front().map_or(0.0, |m| m.duration_ms),
         };
 
@@ -105,13 +105,13 @@ pub fn process_camera_move_list(
 
                 // Transition to InProgress with captured starting orbital parameters
                 queue.state = MoveState::InProgress {
-                    elapsed_ms: 0.0,
-                    start_focus: pan_orbit.target_focus,
+                    elapsed_ms:   0.0,
+                    start_focus:  pan_orbit.target_focus,
                     start_radius: pan_orbit.target_radius,
-                    start_yaw: pan_orbit.target_yaw,
-                    start_pitch: pan_orbit.target_pitch,
+                    start_yaw:    pan_orbit.target_yaw,
+                    start_pitch:  pan_orbit.target_pitch,
                 };
-            }
+            },
             MoveState::InProgress {
                 elapsed_ms,
                 start_focus,
@@ -179,7 +179,7 @@ pub fn process_camera_move_list(
                     queue.moves.pop_front();
                     queue.state = MoveState::Ready;
                 }
-            }
+            },
         }
     }
 }

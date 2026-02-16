@@ -12,8 +12,8 @@ use crate::zoom::ZoomToFitComponent;
 /// the smoothness is automatically restored via an observer.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SmoothnessStash {
-    pub zoom: f32,
-    pub pan: f32,
+    pub zoom:  f32,
+    pub pan:   f32,
     pub orbit: f32,
 }
 
