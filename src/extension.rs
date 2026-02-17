@@ -10,7 +10,6 @@ use bevy_panorbit_camera::PanOrbitCamera;
 use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
 use crate::events::AnimationBegin;
-use crate::events::AnimationEnd;
 use crate::events::ZoomBegin;
 use crate::events::ZoomEnd;
 use crate::smoothness::SmoothnessStash;
@@ -567,32 +566,6 @@ pub fn on_zoom_to_fit(
         .insert(CurrentFitTarget(target_entity));
 }
 
-/// Observer that fires `ZoomEnd` when an animation completes on an entity with a
-/// `ZoomAnimationMarker`, bridging the animation lifecycle to the zoom lifecycle.
-pub fn on_zoom_animation_end(
-    event: On<AnimationEnd>,
-    mut commands: Commands,
-    marker_query: Query<&ZoomAnimationMarker>,
-) {
-    let camera_entity = event.camera_entity;
-
-    let Ok(marker) = marker_query.get(camera_entity) else {
-        return;
-    };
-
-    commands.trigger(ZoomEnd {
-        camera_entity,
-        target_entity: marker.target_entity,
-        margin: marker.margin,
-        duration_ms: marker.duration_ms,
-        easing: marker.easing,
-    });
-
-    commands
-        .entity(camera_entity)
-        .remove::<ZoomAnimationMarker>();
-}
-
 /// Recursively searches for an `Aabb` component on an entity or its descendants
 pub fn find_descendant_aabb<'a>(
     entity: Entity,
@@ -642,6 +615,7 @@ pub fn on_play_animation(
     start: On<PlayAnimation>,
     mut commands: Commands,
     mut camera_query: Query<&mut PanOrbitCamera>,
+    marker_query: Query<(), With<ZoomAnimationMarker>>,
 ) {
     let entity = start.camera_entity;
 
@@ -649,9 +623,12 @@ pub fn on_play_animation(
         return;
     };
 
-    commands.trigger(AnimationBegin {
-        camera_entity: entity,
-    });
+    // Only fire `AnimationBegin` for user-initiated animations, not internal zoom animations
+    if marker_query.get(entity).is_err() {
+        commands.trigger(AnimationBegin {
+            camera_entity: entity,
+        });
+    }
 
     // Stash and disable smoothness for precise animation control
     let stash = camera.stash_and_disable_smoothness();

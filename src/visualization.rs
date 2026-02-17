@@ -540,33 +540,50 @@ fn draw_aabb_label(
     let cam_up = cam_rot * Vec3::Y;
     let cam_right = cam_rot * Vec3::X;
 
-    // The 6 faces of the AABB, each defined by 4 corner indices and an outward normal.
+    // The 6 faces of the AABB, each defined by 4 corner indices.
     // Corner layout: 0(-x,-y,-z) 1(+x,-y,-z) 2(-x,+y,-z) 3(+x,+y,-z)
     //                4(-x,-y,+z) 5(+x,-y,+z) 6(-x,+y,+z) 7(+x,+y,+z)
-    let faces: [([usize; 4], Vec3); 6] = [
-        ([2, 3, 7, 6], Vec3::Y),     // +Y (top)
-        ([0, 1, 5, 4], Vec3::NEG_Y), // -Y (bottom)
-        ([4, 5, 7, 6], Vec3::Z),     // +Z (front)
-        ([0, 1, 3, 2], Vec3::NEG_Z), // -Z (back)
-        ([1, 5, 7, 3], Vec3::X),     // +X (right)
-        ([0, 4, 6, 2], Vec3::NEG_X), // -X (left)
+    let faces: [[usize; 4]; 6] = [
+        [2, 3, 7, 6], // +Y (top)
+        [0, 1, 5, 4], // -Y (bottom)
+        [4, 5, 7, 6], // +Z (front)
+        [0, 1, 3, 2], // -Z (back)
+        [1, 5, 7, 3], // +X (right)
+        [0, 4, 6, 2], // -X (left)
     ];
 
-    // Find the face whose normal most faces the camera
+    // Find the face whose world-space normal most faces the camera.
+    // Normals are computed from world-space corners via cross product, which yields
+    // area-weighted normals that correctly handle rotation and non-uniform scale.
     let aabb_center = corners.iter().copied().sum::<Vec3>() / 8.0;
     let to_cam = (cam_pos - aabb_center).normalize();
 
     let mut best_face_idx = 0;
     let mut best_dot = f32::NEG_INFINITY;
-    for (i, &(_, normal)) in faces.iter().enumerate() {
+    let mut best_normal = Vec3::ZERO;
+
+    for (i, face) in faces.iter().enumerate() {
+        let edge1 = corners[face[1]] - corners[face[0]];
+        let edge2 = corners[face[3]] - corners[face[0]];
+        let mut normal = edge1.cross(edge2);
+
+        // Ensure outward-pointing: normal should point away from AABB center
+        let face_center =
+            (corners[face[0]] + corners[face[1]] + corners[face[2]] + corners[face[3]]) * 0.25;
+        if normal.dot(face_center - aabb_center) < 0.0 {
+            normal = -normal;
+        }
+
         let dot = normal.dot(to_cam);
         if dot > best_dot {
             best_dot = dot;
             best_face_idx = i;
+            best_normal = normal;
         }
     }
 
-    let (face_corners, face_normal) = faces[best_face_idx];
+    let face_corners = faces[best_face_idx];
+    let face_normal = best_normal.normalize();
 
     // Find the "top" edge of this face: the edge whose midpoint is highest on screen
     // (most positive dot with camera up). Each face has 4 edges.

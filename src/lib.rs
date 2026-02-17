@@ -35,7 +35,6 @@ pub use extension::ZoomToFit;
 use extension::on_animate_to_fit;
 use extension::on_play_animation;
 use extension::on_set_fit_target;
-use extension::on_zoom_animation_end;
 use extension::on_zoom_to_fit;
 pub use smoothness::SmoothnessStash;
 use smoothness::restore_smoothness_on_move_end;
@@ -63,7 +62,6 @@ impl Plugin for CameraExtPlugin {
             .add_observer(on_play_animation)
             .add_observer(on_set_fit_target)
             .add_observer(on_animate_to_fit)
-            .add_observer(on_zoom_animation_end)
             // Add systems
             .add_systems(Update, process_camera_move_list);
     }

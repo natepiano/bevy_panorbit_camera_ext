@@ -11,6 +11,8 @@ use bevy_panorbit_camera::PanOrbitCamera;
 use crate::events::AnimationEnd;
 use crate::events::CameraMoveBegin;
 use crate::events::CameraMoveEnd;
+use crate::events::ZoomEnd;
+use crate::extension::ZoomAnimationMarker;
 
 /// Individual camera movement with target position and duration
 #[derive(Clone, Reflect)]
@@ -87,17 +89,34 @@ impl CameraMoveList {
 pub fn process_camera_move_list(
     mut commands: Commands,
     time: Res<Time>,
-    mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut CameraMoveList)>,
+    mut camera_query: Query<(
+        Entity,
+        &mut PanOrbitCamera,
+        &mut CameraMoveList,
+        Option<&ZoomAnimationMarker>,
+    )>,
 ) {
-    for (entity, mut pan_orbit, mut queue) in &mut camera_query {
+    for (entity, mut pan_orbit, mut queue, zoom_marker) in &mut camera_query {
         // Get the current move from the front of the queue (clone to avoid borrow issues)
         let Some(current_move) = queue.moves.front().cloned() else {
-            // Queue is empty - fire completion event and remove component (observer will restore
-            // smoothness)
-            commands.trigger(AnimationEnd {
-                camera_entity: entity,
-            });
+            // Remove components BEFORE triggering events — observers may re-insert
+            // `CameraMoveList` (e.g. splash animation chains hold → zoom → spins),
+            // and a deferred removal after the trigger would wipe the new one.
             commands.entity(entity).remove::<CameraMoveList>();
+            if let Some(marker) = zoom_marker {
+                commands.entity(entity).remove::<ZoomAnimationMarker>();
+                commands.trigger(ZoomEnd {
+                    camera_entity: entity,
+                    target_entity: marker.target_entity,
+                    margin:        marker.margin,
+                    duration_ms:   marker.duration_ms,
+                    easing:        marker.easing,
+                });
+            } else {
+                commands.trigger(AnimationEnd {
+                    camera_entity: entity,
+                });
+            }
             continue;
         };
 
@@ -120,13 +139,15 @@ pub fn process_camera_move_list(
                     start_pitch:  pan_orbit.target_pitch,
                 };
 
-                commands.trigger(CameraMoveBegin {
-                    camera_entity:      entity,
-                    target_translation: current_move.target_translation,
-                    target_focus:       current_move.target_focus,
-                    duration_ms:        current_move.duration_ms,
-                    easing:             current_move.easing,
-                });
+                if zoom_marker.is_none() {
+                    commands.trigger(CameraMoveBegin {
+                        camera_entity:      entity,
+                        target_translation: current_move.target_translation,
+                        target_focus:       current_move.target_focus,
+                        duration_ms:        current_move.duration_ms,
+                        easing:             current_move.easing,
+                    });
+                }
             },
             MoveState::InProgress {
                 elapsed_ms,
@@ -192,13 +213,15 @@ pub fn process_camera_move_list(
 
                 // Check if move complete and advance to next
                 if is_final_frame {
-                    commands.trigger(CameraMoveEnd {
-                        camera_entity:      entity,
-                        target_translation: current_move.target_translation,
-                        target_focus:       current_move.target_focus,
-                        duration_ms:        current_move.duration_ms,
-                        easing:             current_move.easing,
-                    });
+                    if zoom_marker.is_none() {
+                        commands.trigger(CameraMoveEnd {
+                            camera_entity:      entity,
+                            target_translation: current_move.target_translation,
+                            target_focus:       current_move.target_focus,
+                            duration_ms:        current_move.duration_ms,
+                            easing:             current_move.easing,
+                        });
+                    }
                     queue.moves.pop_front();
                     queue.state = MoveState::Ready;
                 }
