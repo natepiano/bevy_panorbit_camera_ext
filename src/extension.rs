@@ -120,7 +120,7 @@ impl PanOrbitCameraExt for PanOrbitCamera {
 
 /// Event to instantly snap camera to frame a target entity
 #[derive(EntityEvent, Reflect)]
-#[reflect(Event)]
+#[reflect(Event, FromReflect)]
 pub struct SnapToFit {
     pub entity: Entity,
     pub target: Entity,
@@ -139,7 +139,7 @@ impl SnapToFit {
 
 /// Event to smoothly animate camera to frame a target transform
 #[derive(EntityEvent, Reflect)]
-#[reflect(Event)]
+#[reflect(Event, FromReflect)]
 pub struct ZoomToFit {
     pub entity: Entity,
     pub target: Entity,
@@ -158,7 +158,7 @@ impl ZoomToFit {
 
 /// Event to start a queued camera animation
 #[derive(EntityEvent, Reflect)]
-#[reflect(Event)]
+#[reflect(Event, FromReflect)]
 pub struct StartAnimation {
     pub entity: Entity,
     pub moves:  VecDeque<CameraMove>,
@@ -170,7 +170,7 @@ impl StartAnimation {
 
 /// Event to set the target entity for fit visualization debugging
 #[derive(EntityEvent, Reflect)]
-#[reflect(Event)]
+#[reflect(Event, FromReflect)]
 pub struct SetFitTarget {
     pub entity: Entity,
     pub target: Entity,
@@ -338,9 +338,18 @@ fn calculate_convergence_radius(
     let cam_right = rot * Vec3::X;
     let cam_up = rot * Vec3::Y;
 
+    // Compute the object's bounding sphere radius from corners for sensible search bounds.
+    // At camera distance ≈ `object_radius`, the object overfills the screen, giving
+    // a tight lower bound. Upper bound must cover both the current position and objects
+    // much smaller than the current radius.
+    let object_radius = corners
+        .iter()
+        .map(|c| (*c - geometric_center).length())
+        .fold(0.0_f32, f32::max);
+
     // Binary search for the correct radius
-    let mut min_radius = initial_radius * 0.1;
-    let mut max_radius = initial_radius * 10.0;
+    let mut min_radius = object_radius.min(initial_radius * 0.1);
+    let mut max_radius = (initial_radius * 10.0).max(object_radius * 100.0);
     let mut best_radius = initial_radius;
     let mut best_focus = geometric_center;
     let mut best_error = f32::INFINITY;
@@ -353,24 +362,17 @@ fn calculate_convergence_radius(
     for iteration in 0..crate::zoom::MAX_ITERATIONS {
         let test_radius = (min_radius + max_radius) * 0.5;
 
-        // Step 1: find the centered focus by iterating focus adjustments.
-        // Corners have varying depths so one step isn't exact; 3 iterations converge quickly.
-        let mut centered_focus = geometric_center;
-        for _ in 0..3 {
-            let cam_pos_iter = centered_focus + rot * Vec3::new(0.0, 0.0, test_radius);
-            let cam_global_iter =
-                GlobalTransform::from(Transform::from_translation(cam_pos_iter).with_rotation(rot));
-            if let Some(iter_bounds) = ScreenSpaceBounds::from_corners(
-                corners,
-                &cam_global_iter,
-                perspective,
-                aspect_ratio,
-                1.0, // no zoom multiplier - we only need the screen-space center
-            ) {
-                let (cx, cy) = iter_bounds.center();
-                centered_focus += cam_right * cx * test_radius + cam_up * cy * test_radius;
-            }
-        }
+        // Step 1: find the centered focus using accurate depth-based centering
+        let centered_focus = refine_focus_centering(
+            corners,
+            geometric_center,
+            test_radius,
+            rot,
+            cam_right,
+            cam_up,
+            perspective,
+            aspect_ratio,
+        );
 
         // Step 2: evaluate margins at the centered focus position
         let cam_pos = centered_focus + rot * Vec3::new(0.0, 0.0, test_radius);
@@ -433,7 +435,49 @@ fn calculate_convergence_radius(
         "Binary search did not converge in {} iterations. Using best radius {best_radius:.1}",
         crate::zoom::MAX_ITERATIONS
     );
+
     Some((best_radius, best_focus))
+}
+
+/// Shifts the camera focus so the projected bounding box is centered on screen.
+///
+/// A single correction step uses `avg_depth` as the depth estimate, but corners sit at
+/// varying depths (near vs far side of the box). Each iteration reduces the centering
+/// error by roughly 70-80% (the residual is proportional to depth variance across
+/// corners). With `CENTERING_MAX_ITERATIONS` = 10 the residual is ~0.3^10 ≈ 0.000006,
+/// well past the `CENTERING_TOLERANCE` of 0.0001. In practice convergence takes 3-5
+/// iterations.
+fn refine_focus_centering(
+    corners: &[Vec3; 8],
+    initial_focus: Vec3,
+    radius: f32,
+    rot: Quat,
+    cam_right: Vec3,
+    cam_up: Vec3,
+    perspective: &PerspectiveProjection,
+    aspect_ratio: f32,
+) -> Vec3 {
+    use crate::zoom::CENTERING_MAX_ITERATIONS;
+    use crate::zoom::CENTERING_TOLERANCE;
+    use crate::zoom::ScreenSpaceBounds;
+
+    let mut focus = initial_focus;
+    for _ in 0..CENTERING_MAX_ITERATIONS {
+        let cam_pos = focus + rot * Vec3::new(0.0, 0.0, radius);
+        let cam_global =
+            GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
+        let Some(bounds) =
+            ScreenSpaceBounds::from_corners(corners, &cam_global, perspective, aspect_ratio, 1.0)
+        else {
+            break;
+        };
+        let (cx, cy) = bounds.center();
+        if cx.abs() < CENTERING_TOLERANCE && cy.abs() < CENTERING_TOLERANCE {
+            break;
+        }
+        focus += cam_right * cx * bounds.avg_depth + cam_up * cy * bounds.avg_depth;
+    }
+    focus
 }
 
 /// Observer for ZoomToFit event - initiates smooth zoom-to-fit animation

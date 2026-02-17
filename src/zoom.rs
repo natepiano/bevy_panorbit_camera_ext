@@ -6,6 +6,8 @@ use bevy_panorbit_camera::PanOrbitCamera;
 // Algorithm constants (internal implementation details)
 pub const MAX_ITERATIONS: usize = 200;
 pub const TOLERANCE: f32 = 0.001; // 0.1% tolerance for convergence
+pub const CENTERING_MAX_ITERATIONS: usize = 10;
+pub const CENTERING_TOLERANCE: f32 = 0.0001; // normalized screen-space center offset
 
 /// Default margin for zoom-to-fit operations (0.1 = 10% margin on each side)
 pub const DEFAULT_MARGIN: f32 = 0.1;
