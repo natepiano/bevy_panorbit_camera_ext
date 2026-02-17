@@ -13,7 +13,8 @@ use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 use bevy_panorbit_camera::PanOrbitCameraPlugin;
 use bevy_panorbit_camera::TrackpadBehavior;
-use bevy_panorbit_camera_ext::prelude::*;
+use bevy_panorbit_camera_ext::CameraExtPlugin;
+use bevy_panorbit_camera_ext::ZoomToFit;
 
 const ZOOM_DURATION_MS: f32 = 500.0;
 const ZOOM_MARGIN: f32 = 0.25;

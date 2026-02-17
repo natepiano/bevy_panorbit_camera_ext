@@ -41,6 +41,7 @@ pub trait PanOrbitCameraExt {
     /// - Query references for `Aabb`, `Children`, and `GlobalTransform`
     ///
     /// Returns `Some(radius)` if successful, `None` if target has no `Aabb` or calculation fails.
+    #[allow(clippy::too_many_arguments)]
     fn calculate_fit_radius(
         &self,
         target_entity: Entity,
@@ -214,6 +215,7 @@ impl AnimateToFit {
 ///
 /// Returns `Some(radius)` if successful, `None` if the target has no `Aabb` or the
 /// calculation fails.
+#[allow(clippy::too_many_arguments)]
 pub fn calculate_fit_radius(
     target_entity: Entity,
     current_radius: f32,
@@ -243,6 +245,7 @@ pub fn calculate_fit_radius(
 
 /// Calculates the optimal radius and centered focus to fit a target entity in the camera view.
 /// The focus is adjusted so the projected box is centered in the viewport.
+#[allow(clippy::too_many_arguments)]
 fn calculate_fit(
     target_entity: Entity,
     current_radius: f32,
@@ -285,6 +288,7 @@ fn calculate_fit(
 ///
 /// Note: A lateral camera shift doesn't change corner depths, so the centering is geometrically
 /// exact for the constraining margin check.
+#[allow(clippy::too_many_arguments)]
 fn calculate_convergence_radius(
     corners: &[Vec3; 8],
     initial_radius: f32,
@@ -414,6 +418,7 @@ fn calculate_convergence_radius(
 /// corners). With `CENTERING_MAX_ITERATIONS` = 10 the residual is ~0.3^10 ≈ 0.000006,
 /// well past the `CENTERING_TOLERANCE` of 0.0001. In practice convergence takes 3-5
 /// iterations.
+#[allow(clippy::too_many_arguments)]
 fn refine_focus_centering(
     corners: &[Vec3; 8],
     initial_focus: Vec3,

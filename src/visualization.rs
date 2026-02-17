@@ -523,6 +523,7 @@ fn cleanup_margin_labels(mut commands: Commands, label_query: Query<Entity, With
 }
 
 /// Draws screen-aligned bounds for the current fit target
+#[allow(clippy::too_many_arguments)]
 fn draw_fit_target_bounds(
     mut commands: Commands,
     mut gizmos: Gizmos<FitTargetGizmo>,
