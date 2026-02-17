@@ -19,21 +19,18 @@ pub use animation::CameraMove;
 pub use animation::CameraMoveList;
 // Internal - used by plugin, not for external use
 use animation::process_camera_move_list;
+pub use extension::AnimateToFit;
 // Public API - Components (for querying)
 pub use extension::CurrentFitTarget;
 // Public API - Traits
 pub use extension::PanOrbitCameraExt;
 pub use extension::SetFitTarget;
-pub use extension::SnapToFit;
 pub use extension::StartAnimation;
 pub use extension::ZoomToFit;
-// Public API - Configuration components (used by prelude)
-pub use extension::ZoomToFitConfig;
-use extension::auto_add_zoom_config;
 // Public API - Utility functions
 pub use extension::calculate_fit_radius;
+use extension::on_animate_to_fit;
 use extension::on_set_fit_target;
-use extension::on_snap_to_fit;
 use extension::on_start_animation;
 use extension::on_zoom_to_fit;
 pub use smoothness::SmoothnessStash;
@@ -61,12 +58,11 @@ impl Plugin for CameraExtPlugin {
             // Register observers for component lifecycle events
             .add_observer(restore_smoothness_on_move_complete)
             .add_observer(restore_smoothness_on_zoom_complete)
-            .add_observer(auto_add_zoom_config)
             // Register observers for custom events
-            .add_observer(on_snap_to_fit)
             .add_observer(on_zoom_to_fit)
             .add_observer(on_start_animation)
             .add_observer(on_set_fit_target)
+            .add_observer(on_animate_to_fit)
             // Add systems
             .add_systems(
                 Update,

@@ -3,11 +3,10 @@
 pub use crate::CameraExtPlugin;
 pub use crate::animation::CameraMove;
 pub use crate::animation::CameraMoveList;
+pub use crate::extension::AnimateToFit;
 pub use crate::extension::PanOrbitCameraExt;
-pub use crate::extension::SnapToFit;
 pub use crate::extension::StartAnimation;
 pub use crate::extension::ZoomToFit;
-pub use crate::extension::ZoomToFitConfig;
 pub use crate::smoothness::SmoothnessStash;
 pub use crate::zoom::DEFAULT_MARGIN;
 pub use crate::zoom::Edge;

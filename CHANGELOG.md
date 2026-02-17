@@ -12,8 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Camera animation system with queued moves and easing functions
-- Zoom-to-fit and snap-to-fit for entities with Aabb components
+- `ZoomToFit` event for framing entities with `Aabb` components (animated via `duration_ms` or instant with `0.0`)
+- `StartAnimation` event for queued camera movement sequences
+- `SetFitTarget` event for fit target visualization
 - Extension trait `PanOrbitCameraExt` for camera manipulation
-- Entity events: `SnapToFit`, `ZoomToFit`, `StartAnimation`
+- `calculate_fit_radius` public function for computing fit radius at arbitrary orientations
+- Focus centering algorithm with tolerance-based convergence
+- Fit target visualization with `FitTargetVisualizationPlugin`
 
 [0.1.0]: https://github.com/YOUR_USERNAME/bevy_panorbit_camera_ext/releases/tag/v0.1.0

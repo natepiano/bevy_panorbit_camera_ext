@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use bevy::camera::primitives::Aabb;
+use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
@@ -10,22 +11,11 @@ use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
 use crate::smoothness::SmoothnessStash;
 
-/// Configuration for zoom-to-fit behavior
-#[derive(Component, Debug, Clone)]
-pub struct ZoomToFitConfig {
-    /// Padding factor for zoom-to-fit (1.0 = no padding, 1.2 = 20% padding)
-    pub padding: f32,
-}
-
 /// Marks the entity that the camera is currently fitted to.
 /// Persists after fit completes to enable persistent visualization.
 #[derive(Component, Reflect, Debug)]
 #[reflect(Component)]
 pub struct CurrentFitTarget(pub Entity);
-
-impl Default for ZoomToFitConfig {
-    fn default() -> Self { Self { padding: 1.2 } }
-}
 
 /// Extension trait for `PanOrbitCamera` providing convenience methods.
 pub trait PanOrbitCameraExt {
@@ -118,40 +108,24 @@ impl PanOrbitCameraExt for PanOrbitCamera {
 // Entity Events
 // ============================================================================
 
-/// Event to instantly snap camera to frame a target entity
-#[derive(EntityEvent, Reflect)]
-#[reflect(Event, FromReflect)]
-pub struct SnapToFit {
-    pub entity: Entity,
-    pub target: Entity,
-    pub margin: f32,
-}
-
-impl SnapToFit {
-    pub const fn new(entity: Entity, target: Entity, margin: f32) -> Self {
-        Self {
-            entity,
-            target,
-            margin,
-        }
-    }
-}
-
-/// Event to smoothly animate camera to frame a target transform
+/// Event to frame a target entity in the camera view.
+/// Use `duration_ms > 0.0` for a smooth animated zoom, or `0.0` for an instant snap.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct ZoomToFit {
-    pub entity: Entity,
-    pub target: Entity,
-    pub margin: f32,
+    pub entity:      Entity,
+    pub target:      Entity,
+    pub margin:      f32,
+    pub duration_ms: f32,
 }
 
 impl ZoomToFit {
-    pub const fn new(entity: Entity, target: Entity, margin: f32) -> Self {
+    pub const fn new(entity: Entity, target: Entity, margin: f32, duration_ms: f32) -> Self {
         Self {
             entity,
             target,
             margin,
+            duration_ms,
         }
     }
 }
@@ -180,23 +154,45 @@ impl SetFitTarget {
     pub const fn new(entity: Entity, target: Entity) -> Self { Self { entity, target } }
 }
 
+/// Event to animate the camera to a specific orientation and fit a target entity in view.
+/// Combines orientation change with zoom-to-fit in a single smooth animation.
+#[derive(EntityEvent, Reflect)]
+#[reflect(Event, FromReflect)]
+pub struct AnimateToFit {
+    pub entity:      Entity,
+    pub target:      Entity,
+    pub yaw:         f32,
+    pub pitch:       f32,
+    pub margin:      f32,
+    pub duration_ms: f32,
+    pub easing:      EaseFunction,
+}
+
+impl AnimateToFit {
+    pub const fn new(
+        entity: Entity,
+        target: Entity,
+        yaw: f32,
+        pitch: f32,
+        margin: f32,
+        duration_ms: f32,
+        easing: EaseFunction,
+    ) -> Self {
+        Self {
+            entity,
+            target,
+            yaw,
+            pitch,
+            margin,
+            duration_ms,
+            easing,
+        }
+    }
+}
+
 // ============================================================================
 // Observers
 // ============================================================================
-
-/// Observer that automatically adds `ZoomToFitConfig` to cameras
-pub fn auto_add_zoom_config(
-    add: On<Add, PanOrbitCamera>,
-    mut commands: Commands,
-    config_query: Query<&ZoomToFitConfig>,
-) {
-    let entity = add.entity;
-
-    // Only add if not already present
-    if config_query.get(entity).is_err() {
-        commands.entity(entity).insert(ZoomToFitConfig::default());
-    }
-}
 
 /// Calculates the optimal radius to fit a target entity in the camera view.
 /// Uses the convergence algorithm from the given camera orientation (`yaw`, `pitch`).
@@ -263,50 +259,6 @@ fn calculate_fit(
         perspective,
         camera.logical_viewport_size(),
     )
-}
-
-/// Observer for SnapToFit event - instantly positions camera to frame the target
-/// Requires target entity to have an Aabb (direct or on descendants)
-pub fn on_snap_to_fit(
-    snap: On<SnapToFit>,
-    mut commands: Commands,
-    mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera)>,
-    aabb_query: Query<&Aabb>,
-    children_query: Query<&Children>,
-    global_transform_query: Query<&GlobalTransform>,
-) {
-    let camera_entity = snap.entity;
-    let target_entity = snap.target;
-    let margin = snap.margin;
-
-    let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
-        return;
-    };
-
-    let Some((radius, focus)) = calculate_fit(
-        target_entity,
-        camera.target_radius,
-        camera.target_yaw,
-        camera.target_pitch,
-        margin,
-        projection,
-        cam,
-        &aabb_query,
-        &children_query,
-        &global_transform_query,
-    ) else {
-        warn!("SnapToFit: Failed to calculate radius for entity {target_entity:?}");
-        return;
-    };
-
-    camera.target_focus = focus;
-    camera.target_radius = radius;
-    camera.force_update = true;
-
-    // Mark current fit target for visualization
-    commands
-        .entity(camera_entity)
-        .insert(CurrentFitTarget(target_entity));
 }
 
 /// Calculates the radius and centered focus needed to fit corners in view.
@@ -480,8 +432,10 @@ fn refine_focus_centering(
     focus
 }
 
-/// Observer for ZoomToFit event - initiates smooth zoom-to-fit animation
-/// Requires target entity to have an Aabb (direct or on descendants)
+/// Observer for `ZoomToFit` event - frames a target entity in the camera view.
+/// When `duration_ms > 0.0`, animates smoothly over that duration.
+/// When `duration_ms <= 0.0`, snaps instantly.
+/// Requires target entity to have an `Aabb` (direct or on descendants).
 pub fn on_zoom_to_fit(
     zoom: On<ZoomToFit>,
     mut commands: Commands,
@@ -493,13 +447,14 @@ pub fn on_zoom_to_fit(
     let camera_entity = zoom.entity;
     let target_entity = zoom.target;
     let margin = zoom.margin;
+    let duration_ms = zoom.duration_ms;
 
     let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
         return;
     };
 
     info!(
-        "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1}",
+        "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={duration_ms:.0}",
         camera.target_yaw, camera.target_pitch, camera.target_focus, camera.target_radius
     );
 
@@ -519,24 +474,27 @@ pub fn on_zoom_to_fit(
         return;
     };
 
-    // Store current values as animation start
-    let start_focus = camera.target_focus;
-    let start_radius = camera.target_radius;
+    if duration_ms > 0.0 {
+        // Animated path: lerp from current to target over duration
+        use crate::zoom::ZoomToFitAnimation;
+        commands.entity(camera_entity).insert(ZoomToFitAnimation {
+            start_focus: camera.target_focus,
+            target_focus,
+            start_radius: camera.target_radius,
+            target_radius,
+            duration_ms,
+            elapsed_ms: 0.0,
+        });
 
-    // Create animation component
-    use crate::zoom::ZoomToFitAnimation;
-    commands.entity(camera_entity).insert(ZoomToFitAnimation {
-        start_focus,
-        target_focus,
-        start_radius,
-        target_radius,
-        duration_ms: 500.0,
-        elapsed_ms: 0.0,
-    });
-
-    // Disable smoothness during animation
-    let stash = camera.stash_and_disable_smoothness();
-    commands.entity(camera_entity).insert(stash);
+        // Disable smoothness during animation
+        let stash = camera.stash_and_disable_smoothness();
+        commands.entity(camera_entity).insert(stash);
+    } else {
+        // Instant path: snap directly to target
+        camera.target_focus = target_focus;
+        camera.target_radius = target_radius;
+        camera.force_update = true;
+    }
 
     // Mark current fit target for visualization
     commands
@@ -615,4 +573,63 @@ pub fn on_set_fit_target(set_target: On<SetFitTarget>, mut commands: Commands) {
     commands
         .entity(set_target.entity)
         .insert(CurrentFitTarget(set_target.target));
+}
+
+/// Observer for `AnimateToFit` event - animates the camera to a specific orientation
+/// while fitting a target entity in view.
+pub fn on_animate_to_fit(
+    event: On<AnimateToFit>,
+    mut commands: Commands,
+    camera_query: Query<(&PanOrbitCamera, &Projection, &Camera)>,
+    aabb_query: Query<&Aabb>,
+    children_query: Query<&Children>,
+    global_transform_query: Query<&GlobalTransform>,
+) {
+    let camera_entity = event.entity;
+    let target_entity = event.target;
+    let yaw = event.yaw;
+    let pitch = event.pitch;
+    let margin = event.margin;
+    let duration_ms = event.duration_ms;
+    let easing = event.easing;
+
+    let Ok((camera, projection, cam)) = camera_query.get(camera_entity) else {
+        return;
+    };
+
+    let Some((target_radius, target_focus)) = calculate_fit(
+        target_entity,
+        camera.target_radius,
+        yaw,
+        pitch,
+        margin,
+        projection,
+        cam,
+        &aabb_query,
+        &children_query,
+        &global_transform_query,
+    ) else {
+        warn!("AnimateToFit: Failed to calculate fit for entity {target_entity:?}");
+        return;
+    };
+
+    // Convert spherical (yaw, pitch, radius) to cartesian position relative to focus
+    let target_translation = target_focus
+        + Vec3::new(
+            target_radius * pitch.cos() * yaw.sin(),
+            target_radius * pitch.sin(),
+            target_radius * pitch.cos() * yaw.cos(),
+        );
+
+    let moves = VecDeque::from([CameraMove {
+        target_translation,
+        target_focus,
+        duration_ms,
+        easing,
+    }]);
+
+    commands.trigger(StartAnimation::new(camera_entity, moves));
+    commands
+        .entity(camera_entity)
+        .insert(CurrentFitTarget(target_entity));
 }
