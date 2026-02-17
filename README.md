@@ -4,11 +4,9 @@ Extension library for [`bevy_panorbit_camera`](https://github.com/Plonq/bevy_pan
 
 ## Features
 
-- Camera animation system with queued moves and easing
+- Simple camera animation system with queued moves and easing
 - Zoom-to-fit with animated or instant positioning
-- Extension traits for camera manipulation
-- Automatic smoothness preservation during operations
-- Fit target visualization for debugging
+- Zoom target debug visualization
 
 ## Installation
 
@@ -72,7 +70,32 @@ let moves = VecDeque::from([
 commands.trigger(StartAnimation::new(camera_entity, moves));
 ```
 
-## Compatibility
+### Lifecycle Events
 
-- Bevy 0.18.0
-- bevy_panorbit_camera 0.34.0
+Every animation and zoom operation fires start/complete events that consumers can observe:
+
+| Level | Start | Complete |
+|-------|-------|----------|
+| Zoom operation | `ZoomStart` | `ZoomComplete` |
+| Animation queue | `AnimationStart` | `AnimationComplete` |
+| Individual move | `CameraMoveStart` | `CameraMoveComplete` |
+
+`CameraMoveStart` and `CameraMoveComplete` include the move data (`target_translation`, `target_focus`, `duration_ms`, `easing`).
+
+```rust
+// React when a zoom-to-fit completes on a specific camera
+commands.entity(camera_entity).observe(|_: On<ZoomComplete>| {
+    info!("Zoom finished!");
+});
+
+// React to each individual move in an animation queue
+commands.entity(camera_entity).observe(|event: On<CameraMoveComplete>| {
+    info!("Move to {:?} finished", event.target_focus);
+});
+```
+
+## Version Compatibility
+
+| bevy_panorbit_camera_ext | bevy_panorbit_camera | Bevy |
+|--------------------------|----------------------|------|
+| 0.1                      | 0.34                 | 0.18 |

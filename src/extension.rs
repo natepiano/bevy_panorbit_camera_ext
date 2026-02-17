@@ -9,7 +9,9 @@ use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
+use crate::events::AnimationStart;
 use crate::events::ZoomComplete;
+use crate::events::ZoomStart;
 use crate::smoothness::SmoothnessStash;
 
 /// Marks the entity that the camera is currently fitted to.
@@ -112,6 +114,11 @@ impl PanOrbitCameraExt for PanOrbitCamera {
 
 /// Event to frame a target entity in the camera view.
 /// Use `duration_ms > 0.0` for a smooth animated zoom, or `0.0` for an instant snap.
+///
+/// The `margin` is the **total** fraction of screen reserved for padding — it is split
+/// equally across both sides of the constraining dimension. For example, a margin of
+/// `0.25` leaves ~12.5% padding on each side (25% total). The non-constraining
+/// dimension will have additional padding to preserve the target's aspect ratio.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct ZoomToFit {
@@ -171,6 +178,8 @@ impl SetFitTarget {
 
 /// Event to animate the camera to a specific orientation and fit a target entity in view.
 /// Combines orientation change with zoom-to-fit in a single smooth animation.
+///
+/// See [`ZoomToFit`] for details on how `margin` is applied.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct AnimateToFit {
@@ -473,6 +482,8 @@ pub fn on_zoom_to_fit(
         return;
     };
 
+    commands.trigger(ZoomStart { camera_entity });
+
     info!(
         "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={duration_ms:.0}",
         camera.target_yaw, camera.target_pitch, camera.target_focus, camera.target_radius
@@ -578,6 +589,10 @@ pub fn on_start_animation(
     let Ok(mut camera) = camera_query.get_mut(entity) else {
         return;
     };
+
+    commands.trigger(AnimationStart {
+        camera_entity: entity,
+    });
 
     // Stash and disable smoothness for precise animation control
     let stash = camera.stash_and_disable_smoothness();

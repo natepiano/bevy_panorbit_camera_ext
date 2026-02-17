@@ -4,16 +4,20 @@
 //! - Click the ground to deselect and zoom out to the full scene
 //! - Drag a mesh to rotate it
 //! - Selected meshes show a gizmo outline
+//! - Press 'D' to toggle debug visualization of zoom-to-fit bounds
 
 use std::f32::consts::PI;
 
 use bevy::color::palettes::basic::SILVER;
 use bevy::color::palettes::css::DEEP_SKY_BLUE;
 use bevy::prelude::*;
+use bevy_brp_extras::BrpExtrasPlugin;
 use bevy_panorbit_camera::PanOrbitCamera;
 use bevy_panorbit_camera::PanOrbitCameraPlugin;
 use bevy_panorbit_camera::TrackpadBehavior;
 use bevy_panorbit_camera_ext::CameraExtPlugin;
+use bevy_panorbit_camera_ext::FitTargetGizmo;
+use bevy_panorbit_camera_ext::FitTargetVisualizationPlugin;
 use bevy_panorbit_camera_ext::ZoomToFit;
 
 const ZOOM_DURATION_MS: f32 = 500.0;
@@ -28,10 +32,12 @@ fn main() {
             DefaultPlugins,
             PanOrbitCameraPlugin,
             CameraExtPlugin,
+            FitTargetVisualizationPlugin,
             MeshPickingPlugin,
+            BrpExtrasPlugin::default(),
         ))
         .add_systems(Startup, setup)
-        .add_systems(Update, draw_selection_gizmo)
+        .add_systems(Update, (draw_selection_gizmo, toggle_debug_visualization))
         .run();
 }
 
@@ -155,6 +161,17 @@ fn setup(
         })
         .id();
 
+    // Instructions
+    commands.spawn((
+        Text::new("Press 'D' for debug visualization"),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            left: Val::Px(12.0),
+            ..default()
+        },
+    ));
+
     commands.insert_resource(SceneEntities {
         camera,
         scene_bounds,
@@ -206,10 +223,27 @@ fn on_mesh_dragged(drag: On<Pointer<Drag>>, mut transforms: Query<&mut Transform
     }
 }
 
+fn toggle_debug_visualization(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut config_store: ResMut<GizmoConfigStore>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyD) {
+        let (config, _) = config_store.config_mut::<FitTargetGizmo>();
+        config.enabled = !config.enabled;
+    }
+}
+
 fn draw_selection_gizmo(
     mut gizmos: Gizmos,
+    config_store: Res<GizmoConfigStore>,
     query: Query<(&Transform, &MeshShape), With<Selected>>,
 ) {
+    // Hide selection gizmo when debug visualization is active
+    let (debug_config, _) = config_store.config::<FitTargetGizmo>();
+    if debug_config.enabled {
+        return;
+    }
+
     let color = Color::from(DEEP_SKY_BLUE);
     for (transform, shape) in &query {
         match shape {

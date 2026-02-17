@@ -9,6 +9,8 @@ use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::events::AnimationComplete;
+use crate::events::CameraMoveComplete;
+use crate::events::CameraMoveStart;
 
 /// Individual camera movement with target position and duration
 #[derive(Clone, Reflect)]
@@ -117,6 +119,14 @@ pub fn process_camera_move_list(
                     start_yaw:    pan_orbit.target_yaw,
                     start_pitch:  pan_orbit.target_pitch,
                 };
+
+                commands.trigger(CameraMoveStart {
+                    camera_entity:      entity,
+                    target_translation: current_move.target_translation,
+                    target_focus:       current_move.target_focus,
+                    duration_ms:        current_move.duration_ms,
+                    easing:             current_move.easing,
+                });
             },
             MoveState::InProgress {
                 elapsed_ms,
@@ -182,6 +192,13 @@ pub fn process_camera_move_list(
 
                 // Check if move complete and advance to next
                 if is_final_frame {
+                    commands.trigger(CameraMoveComplete {
+                        camera_entity:      entity,
+                        target_translation: current_move.target_translation,
+                        target_focus:       current_move.target_focus,
+                        duration_ms:        current_move.duration_ms,
+                        easing:             current_move.easing,
+                    });
                     queue.moves.pop_front();
                     queue.state = MoveState::Ready;
                 }

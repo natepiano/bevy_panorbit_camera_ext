@@ -20,7 +20,11 @@ pub use animation::CameraMoveList;
 // Internal - used by plugin, not for external use
 use animation::process_camera_move_list;
 pub use events::AnimationComplete;
+pub use events::AnimationStart;
+pub use events::CameraMoveComplete;
+pub use events::CameraMoveStart;
 pub use events::ZoomComplete;
+pub use events::ZoomStart;
 pub use extension::AnimateToFit;
 // Public API - Traits
 pub use extension::PanOrbitCameraExt;
