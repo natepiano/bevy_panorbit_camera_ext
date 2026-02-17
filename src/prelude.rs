@@ -3,6 +3,8 @@
 pub use crate::CameraExtPlugin;
 pub use crate::animation::CameraMove;
 pub use crate::animation::CameraMoveList;
+pub use crate::events::AnimationComplete;
+pub use crate::events::ZoomComplete;
 pub use crate::extension::AnimateToFit;
 pub use crate::extension::PanOrbitCameraExt;
 pub use crate::extension::StartAnimation;

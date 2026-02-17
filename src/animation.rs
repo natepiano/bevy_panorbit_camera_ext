@@ -8,6 +8,8 @@ use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
+use crate::events::AnimationComplete;
+
 /// Individual camera movement with target position and duration
 #[derive(Clone, Reflect)]
 pub struct CameraMove {
@@ -88,7 +90,9 @@ pub fn process_camera_move_list(
     for (entity, mut pan_orbit, mut queue) in &mut camera_query {
         // Get the current move from the front of the queue (clone to avoid borrow issues)
         let Some(current_move) = queue.moves.front().cloned() else {
-            // Queue is empty - remove component (observer will restore smoothness)
+            // Queue is empty - fire completion event and remove component (observer will restore
+            // smoothness)
+            commands.trigger(AnimationComplete { entity });
             commands.entity(entity).remove::<CameraMoveList>();
             continue;
         };

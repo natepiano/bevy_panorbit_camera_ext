@@ -16,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StartAnimation` event for queued camera movement sequences
 - `SetFitTarget` event for fit target visualization
 - Extension trait `PanOrbitCameraExt` for camera manipulation
-- `calculate_fit_radius` public function for computing fit radius at arbitrary orientations
 - Focus centering algorithm with tolerance-based convergence
 - Fit target visualization with `FitTargetVisualizationPlugin`
 

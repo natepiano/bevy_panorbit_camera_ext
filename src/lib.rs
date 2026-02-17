@@ -7,18 +7,21 @@
 use bevy::prelude::*;
 
 mod animation;
+mod events;
 mod extension;
 pub mod prelude;
 mod smoothness;
 mod visualization;
 mod zoom;
 
-// Public API - Events
+// Public API - Completion events
 // Public API - Animation types (used by prelude and external code)
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
 // Internal - used by plugin, not for external use
 use animation::process_camera_move_list;
+pub use events::AnimationComplete;
+pub use events::ZoomComplete;
 pub use extension::AnimateToFit;
 // Public API - Components (for querying)
 pub use extension::CurrentFitTarget;
@@ -27,8 +30,6 @@ pub use extension::PanOrbitCameraExt;
 pub use extension::SetFitTarget;
 pub use extension::StartAnimation;
 pub use extension::ZoomToFit;
-// Public API - Utility functions
-pub use extension::calculate_fit_radius;
 use extension::on_animate_to_fit;
 use extension::on_set_fit_target;
 use extension::on_start_animation;

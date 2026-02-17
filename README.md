@@ -72,10 +72,6 @@ let moves = VecDeque::from([
 commands.trigger(StartAnimation::new(camera_entity, moves));
 ```
 
-### `calculate_fit_radius`
-
-For advanced use cases where you need the raw fit radius value (e.g., building custom multi-move animation sequences), the `calculate_fit_radius` function is available as a public API.
-
 ## Compatibility
 
 - Bevy 0.18.0

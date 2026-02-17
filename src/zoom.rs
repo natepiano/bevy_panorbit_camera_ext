@@ -3,6 +3,8 @@
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
+use crate::events::ZoomComplete;
+
 // Algorithm constants (internal implementation details)
 pub const MAX_ITERATIONS: usize = 200;
 pub const TOLERANCE: f32 = 0.001; // 0.1% tolerance for convergence
@@ -295,7 +297,8 @@ pub fn zoom_to_fit_animation_system(
             camera.yaw = Some(camera.target_yaw);
             camera.pitch = Some(camera.target_pitch);
 
-            // Remove animation component (triggers smoothness restore)
+            // Fire completion event and remove animation component (triggers smoothness restore)
+            commands.trigger(ZoomComplete { entity });
             commands.entity(entity).remove::<ZoomToFitAnimation>();
         }
     }

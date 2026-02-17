@@ -9,6 +9,7 @@ use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
+use crate::events::ZoomComplete;
 use crate::smoothness::SmoothnessStash;
 
 /// Marks the entity that the camera is currently fitted to.
@@ -494,6 +495,9 @@ pub fn on_zoom_to_fit(
         camera.target_focus = target_focus;
         camera.target_radius = target_radius;
         camera.force_update = true;
+        commands.trigger(ZoomComplete {
+            entity: camera_entity,
+        });
     }
 
     // Mark current fit target for visualization
