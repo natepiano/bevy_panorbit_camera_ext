@@ -14,13 +14,94 @@ use crate::events::CameraMoveEnd;
 use crate::events::ZoomEnd;
 use crate::extension::ZoomAnimationMarker;
 
-/// Individual camera movement with target position and duration
+/// Individual camera movement with target position and duration.
+///
+/// Two variants allow different ways to specify the target:
+/// - `ToPosition` — world-space translation + focus (for cinematic sequences)
+/// - `ToOrbit` — orbital parameters around a focus (for zoom-to-fit, avoids gimbal lock)
 #[derive(Clone, Reflect)]
-pub struct CameraMove {
-    pub target_translation: Vec3, // Where to position the camera in world space
-    pub target_focus:       Vec3, // What point the camera should look at
-    pub duration_ms:        f32,  // Duration in milliseconds to complete this move
-    pub easing:             EaseFunction, // Easing function for this move
+pub enum CameraMove {
+    /// Animate to a world-space position looking at a focus point.
+    /// The animation system decomposes this into orbital parameters internally.
+    ToPosition {
+        translation: Vec3,
+        focus:       Vec3,
+        duration_ms: f32,
+        easing:      EaseFunction,
+    },
+    /// Animate to orbital parameters around a focus point.
+    /// Avoids gimbal lock at extreme pitch angles (±PI/2) where world-space
+    /// decomposition via `atan2` loses yaw information.
+    ToOrbit {
+        focus:       Vec3,
+        yaw:         f32,
+        pitch:       f32,
+        radius:      f32,
+        duration_ms: f32,
+        easing:      EaseFunction,
+    },
+}
+
+impl CameraMove {
+    pub const fn duration_ms(&self) -> f32 {
+        match self {
+            Self::ToPosition { duration_ms, .. } | Self::ToOrbit { duration_ms, .. } => {
+                *duration_ms
+            },
+        }
+    }
+
+    pub const fn easing(&self) -> EaseFunction {
+        match self {
+            Self::ToPosition { easing, .. } | Self::ToOrbit { easing, .. } => *easing,
+        }
+    }
+
+    pub const fn focus(&self) -> Vec3 {
+        match self {
+            Self::ToPosition { focus, .. } | Self::ToOrbit { focus, .. } => *focus,
+        }
+    }
+
+    /// Returns the world-space camera position for this move.
+    /// For `ToOrbit`, computes the position from orbital parameters.
+    pub fn translation(&self) -> Vec3 {
+        match self {
+            Self::ToPosition { translation, .. } => *translation,
+            Self::ToOrbit {
+                focus,
+                yaw,
+                pitch,
+                radius,
+                ..
+            } => {
+                let yaw_rot = Quat::from_axis_angle(Vec3::Y, *yaw);
+                let pitch_rot = Quat::from_axis_angle(Vec3::X, -*pitch);
+                let rotation = yaw_rot * pitch_rot;
+                *focus + rotation * Vec3::new(0.0, 0.0, *radius)
+            },
+        }
+    }
+
+    /// Returns the target orbital parameters (yaw, pitch, radius).
+    /// For `ToPosition`, decomposes from the world-space offset (may lose yaw at ±PI/2 pitch).
+    fn orbital_params(&self) -> (f32, f32, f32) {
+        match self {
+            Self::ToPosition {
+                translation, focus, ..
+            } => {
+                let offset = *translation - *focus;
+                let radius = offset.length();
+                let yaw = offset.x.atan2(offset.z);
+                let horizontal_dist = offset.x.hypot(offset.z);
+                let pitch = offset.y.atan2(horizontal_dist);
+                (yaw, pitch, radius)
+            },
+            Self::ToOrbit {
+                yaw, pitch, radius, ..
+            } => (*yaw, *pitch, *radius),
+        }
+    }
 }
 
 /// State tracking for the current camera movement
@@ -66,16 +147,16 @@ impl CameraMoveList {
         let current_remaining = match &self.state {
             MoveState::InProgress { elapsed_ms, .. } => {
                 if let Some(current_move) = self.moves.front() {
-                    (current_move.duration_ms - elapsed_ms).max(0.0)
+                    (current_move.duration_ms() - elapsed_ms).max(0.0)
                 } else {
                     0.0
                 }
             },
-            MoveState::Ready => self.moves.front().map_or(0.0, |m| m.duration_ms),
+            MoveState::Ready => self.moves.front().map_or(0.0, CameraMove::duration_ms),
         };
 
         // Add duration of all remaining moves (skip first since already counted)
-        let remaining_queue: f32 = self.moves.iter().skip(1).map(|m| m.duration_ms).sum();
+        let remaining_queue: f32 = self.moves.iter().skip(1).map(CameraMove::duration_ms).sum();
 
         current_remaining + remaining_queue
     }
@@ -120,9 +201,6 @@ pub fn process_camera_move_list(
             continue;
         };
 
-        // Check if this is the last move (for easing) - check prior to mutable borrow in the match
-        let is_last_move = queue.moves.len() == 1;
-
         match &mut queue.state {
             MoveState::Ready => {
                 // Disable smoothing for precise control
@@ -141,11 +219,8 @@ pub fn process_camera_move_list(
 
                 if zoom_marker.is_none() {
                     commands.trigger(CameraMoveBegin {
-                        camera_entity:      entity,
-                        target_translation: current_move.target_translation,
-                        target_focus:       current_move.target_focus,
-                        duration_ms:        current_move.duration_ms,
-                        easing:             current_move.easing,
+                        camera_entity: entity,
+                        camera_move:   current_move.clone(),
                     });
                 }
             },
@@ -160,51 +235,42 @@ pub fn process_camera_move_list(
                 *elapsed_ms += time.delta_secs() * 1000.0;
 
                 // Calculate interpolation factor (0.0 to 1.0)
-                let t = (*elapsed_ms / current_move.duration_ms).min(1.0);
+                let t = (*elapsed_ms / current_move.duration_ms()).min(1.0);
 
                 let is_final_frame = t >= 1.0;
 
-                // Calculate canonical orbital parameters from target position
-                let offset = current_move.target_translation - current_move.target_focus;
-                let canonical_radius = offset.length();
-                let canonical_yaw = offset.x.atan2(offset.z);
-                let horizontal_dist = offset.x.hypot(offset.z);
-                let canonical_pitch = offset.y.atan2(horizontal_dist);
+                // Extract target orbital parameters
+                // `ToOrbit` provides them directly; `ToPosition` decomposes via atan2
+                let (canonical_yaw, canonical_pitch, canonical_radius) =
+                    current_move.orbital_params();
 
                 // Clamp t to exactly 1.0 if over (important for smooth completion)
                 let t_clamped = t.min(1.0);
 
                 // Apply easing function from the move
-                let t_interp = current_move.easing.sample_unchecked(t_clamped);
+                let t_interp = current_move.easing().sample_unchecked(t_clamped);
 
-                // Determine angle diffs: unwrap during animation, canonical on final frame
-                let (yaw_diff, pitch_diff) = if is_last_move && is_final_frame {
-                    // Final frame of last move: use canonical angles (no unwrapping)
-                    (canonical_yaw - *start_yaw, canonical_pitch - *start_pitch)
-                } else {
-                    // During animation: unwrap angles for smooth continuous rotation
-                    let mut yaw_diff = canonical_yaw - *start_yaw;
-                    // Normalize yaw difference to [-PI, PI]
-                    yaw_diff = std::f32::consts::TAU.mul_add(
-                        -((yaw_diff + std::f32::consts::PI) / std::f32::consts::TAU).floor(),
-                        yaw_diff,
-                    );
+                // Unwrap angles to [-PI, PI] for smooth interpolation (always, including final
+                // frame). Using canonical angles on the final frame causes yaw
+                // snapping when the atan2 decomposition wraps to the opposite side
+                // of the PI boundary.
+                let mut yaw_diff = canonical_yaw - *start_yaw;
+                yaw_diff = std::f32::consts::TAU.mul_add(
+                    -((yaw_diff + std::f32::consts::PI) / std::f32::consts::TAU).floor(),
+                    yaw_diff,
+                );
 
-                    // Unwrap pitch angle to avoid discontinuous jumps
-                    let mut pitch_target = canonical_pitch;
-                    let pitch_diff = pitch_target - *start_pitch;
-                    if pitch_diff > std::f32::consts::PI {
-                        pitch_target -= std::f32::consts::TAU;
-                    } else if pitch_diff < -std::f32::consts::PI {
-                        pitch_target += std::f32::consts::TAU;
-                    }
-                    let pitch_diff = pitch_target - *start_pitch;
+                let mut pitch_target = canonical_pitch;
+                let pitch_diff_raw = pitch_target - *start_pitch;
+                if pitch_diff_raw > std::f32::consts::PI {
+                    pitch_target -= std::f32::consts::TAU;
+                } else if pitch_diff_raw < -std::f32::consts::PI {
+                    pitch_target += std::f32::consts::TAU;
+                }
+                let pitch_diff = pitch_target - *start_pitch;
 
-                    (yaw_diff, pitch_diff)
-                };
-
-                // Interpolate to target (single code path for all cases)
-                pan_orbit.target_focus = start_focus.lerp(current_move.target_focus, t_interp);
+                // Interpolate to target (single code path for both variants)
+                pan_orbit.target_focus = start_focus.lerp(current_move.focus(), t_interp);
                 pan_orbit.target_radius =
                     (canonical_radius - *start_radius).mul_add(t_interp, *start_radius);
                 pan_orbit.target_yaw = yaw_diff.mul_add(t_interp, *start_yaw);
@@ -215,11 +281,8 @@ pub fn process_camera_move_list(
                 if is_final_frame {
                     if zoom_marker.is_none() {
                         commands.trigger(CameraMoveEnd {
-                            camera_entity:      entity,
-                            target_translation: current_move.target_translation,
-                            target_focus:       current_move.target_focus,
-                            duration_ms:        current_move.duration_ms,
-                            easing:             current_move.easing,
+                            camera_entity: entity,
+                            camera_move:   current_move.clone(),
                         });
                     }
                     queue.moves.pop_front();

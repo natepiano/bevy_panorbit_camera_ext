@@ -240,28 +240,26 @@ impl AnimateToFit {
 // ============================================================================
 
 /// Recursively searches for a `Mesh3d` component on an entity or its descendants.
-pub(crate) fn find_descendant_mesh(
+/// Recursively collects all entities with a `Mesh3d` component on an entity or its descendants.
+pub(crate) fn collect_descendant_meshes(
     entity: Entity,
     children_query: &Query<&Children>,
     mesh_query: &Query<&Mesh3d>,
-) -> Option<Entity> {
+    results: &mut Vec<Entity>,
+) {
     if mesh_query.get(entity).is_ok() {
-        return Some(entity);
+        results.push(entity);
     }
 
     if let Ok(children) = children_query.get(entity) {
         for child in children.iter() {
-            if let Some(result) = find_descendant_mesh(child, children_query, mesh_query) {
-                return Some(result);
-            }
+            collect_descendant_meshes(child, children_query, mesh_query, results);
         }
     }
-
-    None
 }
 
-/// Extracts world-space vertex positions from the mesh on an entity or its descendants.
-/// Returns `(vertices, geometric_center)` where `geometric_center` is the entity's
+/// Extracts world-space vertex positions from all meshes on an entity and its descendants.
+/// Returns `(vertices, geometric_center)` where `geometric_center` is the root entity's
 /// `GlobalTransform` translation.
 pub(crate) fn extract_mesh_vertices(
     entity: Entity,
@@ -270,21 +268,48 @@ pub(crate) fn extract_mesh_vertices(
     global_transform_query: &Query<&GlobalTransform>,
     meshes: &Assets<Mesh>,
 ) -> Option<(Vec<Vec3>, Vec3)> {
-    let mesh_entity = find_descendant_mesh(entity, children_query, mesh_query)?;
-    let mesh3d = mesh_query.get(mesh_entity).ok()?;
-    let mesh = meshes.get(&mesh3d.0)?;
-    let global_transform = global_transform_query.get(mesh_entity).ok()?;
+    let mut mesh_entities = Vec::new();
+    collect_descendant_meshes(entity, children_query, mesh_query, &mut mesh_entities);
 
-    let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION)?.as_float3()?;
+    if mesh_entities.is_empty() {
+        return None;
+    }
 
-    let vertices: Vec<Vec3> = positions
-        .iter()
-        .map(|pos| global_transform.transform_point(Vec3::from_array(*pos)))
-        .collect();
+    let mut all_vertices = Vec::new();
 
-    let geometric_center = global_transform.translation();
+    for mesh_entity in &mesh_entities {
+        let Ok(mesh3d) = mesh_query.get(*mesh_entity) else {
+            continue;
+        };
+        let Some(mesh) = meshes.get(&mesh3d.0) else {
+            continue;
+        };
+        let Ok(global_transform) = global_transform_query.get(*mesh_entity) else {
+            continue;
+        };
+        let Some(positions) = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .and_then(|a| a.as_float3())
+        else {
+            continue;
+        };
 
-    Some((vertices, geometric_center))
+        all_vertices.extend(
+            positions
+                .iter()
+                .map(|pos| global_transform.transform_point(Vec3::from_array(*pos))),
+        );
+    }
+
+    if all_vertices.is_empty() {
+        return None;
+    }
+
+    let geometric_center = global_transform_query
+        .get(entity)
+        .map_or(Vec3::ZERO, |gt| gt.translation());
+
+    Some((all_vertices, geometric_center))
 }
 
 // ============================================================================
@@ -586,15 +611,13 @@ pub fn on_zoom_to_fit(
     };
 
     if duration_ms > 0.0 {
-        // Animated path: convert to a single CameraMove routed through PlayAnimation
-        let yaw_rot = Quat::from_axis_angle(Vec3::Y, camera.target_yaw);
-        let pitch_rot = Quat::from_axis_angle(Vec3::X, -camera.target_pitch);
-        let rotation = yaw_rot * pitch_rot;
-        let target_translation = target_focus + rotation * Vec3::new(0.0, 0.0, target_radius);
-
-        let moves = VecDeque::from([CameraMove {
-            target_translation,
-            target_focus,
+        // Animated path: use `ToOrbit` to pass orbital params directly, avoiding
+        // gimbal lock from atan2 decomposition at extreme pitch angles.
+        let moves = VecDeque::from([CameraMove::ToOrbit {
+            focus: target_focus,
+            yaw: camera.target_yaw,
+            pitch: camera.target_pitch,
+            radius: target_radius,
             duration_ms,
             easing,
         }]);
@@ -704,16 +727,11 @@ pub fn on_animate_to_fit(
         return;
     };
 
-    // Convert spherical (yaw, pitch, radius) to cartesian position relative to focus
-    // Must match `PanOrbitCamera`'s `update_orbit_transform`: yaw around Y, then pitch around X
-    let yaw_rot = Quat::from_axis_angle(Vec3::Y, yaw);
-    let pitch_rot = Quat::from_axis_angle(Vec3::X, -pitch);
-    let rotation = yaw_rot * pitch_rot;
-    let target_translation = target_focus + rotation * Vec3::new(0.0, 0.0, target_radius);
-
-    let moves = VecDeque::from([CameraMove {
-        target_translation,
-        target_focus,
+    let moves = VecDeque::from([CameraMove::ToOrbit {
+        focus: target_focus,
+        yaw,
+        pitch,
+        radius: target_radius,
         duration_ms,
         easing,
     }]);

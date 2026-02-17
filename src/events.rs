@@ -3,6 +3,8 @@
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 
+use crate::animation::CameraMove;
+
 // ============================================================================
 // Animation lifecycle (queue-level)
 // ============================================================================
@@ -32,11 +34,8 @@ pub struct AnimationEnd {
 #[reflect(Event, FromReflect)]
 pub struct CameraMoveBegin {
     #[event_target]
-    pub camera_entity:      Entity,
-    pub target_translation: Vec3,
-    pub target_focus:       Vec3,
-    pub duration_ms:        f32,
-    pub easing:             EaseFunction,
+    pub camera_entity: Entity,
+    pub camera_move:   CameraMove,
 }
 
 /// Fired when an individual `CameraMove` completes.
@@ -44,11 +43,8 @@ pub struct CameraMoveBegin {
 #[reflect(Event, FromReflect)]
 pub struct CameraMoveEnd {
     #[event_target]
-    pub camera_entity:      Entity,
-    pub target_translation: Vec3,
-    pub target_focus:       Vec3,
-    pub duration_ms:        f32,
-    pub easing:             EaseFunction,
+    pub camera_entity: Entity,
+    pub camera_move:   CameraMove,
 }
 
 // ============================================================================

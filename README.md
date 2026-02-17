@@ -62,15 +62,19 @@ Queue one or more camera moves for sequential playback with easing functions. Us
 
 ```rust
 let moves = VecDeque::from([
-    CameraMove {
-        target_translation: Vec3::new(0.0, 5.0, 20.0),
-        target_focus:       Vec3::ZERO,
-        duration_ms:        2000.0,
-        easing:             EaseFunction::QuadraticInOut,
+    CameraMove::ToPosition {
+        translation: Vec3::new(0.0, 5.0, 20.0),
+        focus:       Vec3::ZERO,
+        duration_ms: 2000.0,
+        easing:      EaseFunction::QuadraticInOut,
     },
 ]);
 commands.trigger(PlayAnimation::new(camera_entity, moves));
 ```
+
+`CameraMove` has two variants:
+- `ToPosition` — world-space translation + focus (cinematic sequences)
+- `ToOrbit` — orbital parameters around a focus (inspection, zoom-to-fit)
 
 ### `SetFitTarget`
 
@@ -94,7 +98,7 @@ Every animation and zoom operation fires begin/end events that consumers can obs
 | Animation queue | `AnimationBegin` | `AnimationEnd` |
 | Individual move | `CameraMoveBegin` | `CameraMoveEnd` |
 
-`CameraMoveBegin` includes the move data (`target_translation`, `target_focus`, `duration_ms`, `easing`).
+`CameraMoveBegin` includes the full `CameraMove` via its `camera_move` field.
 
 ```rust
 // React when a zoom-to-fit ends on a specific camera
@@ -104,7 +108,7 @@ commands.entity(camera_entity).observe(|_: On<ZoomEnd>| {
 
 // React to each individual move in an animation queue
 commands.entity(camera_entity).observe(|event: On<CameraMoveBegin>| {
-    info!("Move to {:?} started", event.target_focus);
+    info!("Move to {:?} started", event.camera_move.focus());
 });
 ```
 

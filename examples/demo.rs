@@ -455,29 +455,29 @@ fn animate_camera(
 
     // 4 moves that orbit around the focus point
     let moves = VecDeque::from([
-        CameraMove {
-            target_translation: Vec3::new(ORBIT_RADIUS, ORBIT_HEIGHT, 0.0) + ORBIT_FOCUS,
-            target_focus:       ORBIT_FOCUS,
-            duration_ms:        ORBIT_MOVE_DURATION_MS,
-            easing:             e,
+        CameraMove::ToPosition {
+            translation: Vec3::new(ORBIT_RADIUS, ORBIT_HEIGHT, 0.0) + ORBIT_FOCUS,
+            focus:       ORBIT_FOCUS,
+            duration_ms: ORBIT_MOVE_DURATION_MS,
+            easing:      e,
         },
-        CameraMove {
-            target_translation: Vec3::new(0.0, ORBIT_HEIGHT, -ORBIT_RADIUS) + ORBIT_FOCUS,
-            target_focus:       ORBIT_FOCUS,
-            duration_ms:        ORBIT_MOVE_DURATION_MS,
-            easing:             e,
+        CameraMove::ToPosition {
+            translation: Vec3::new(0.0, ORBIT_HEIGHT, -ORBIT_RADIUS) + ORBIT_FOCUS,
+            focus:       ORBIT_FOCUS,
+            duration_ms: ORBIT_MOVE_DURATION_MS,
+            easing:      e,
         },
-        CameraMove {
-            target_translation: Vec3::new(-ORBIT_RADIUS, ORBIT_HEIGHT, 0.0) + ORBIT_FOCUS,
-            target_focus:       ORBIT_FOCUS,
-            duration_ms:        ORBIT_MOVE_DURATION_MS,
-            easing:             e,
+        CameraMove::ToPosition {
+            translation: Vec3::new(-ORBIT_RADIUS, ORBIT_HEIGHT, 0.0) + ORBIT_FOCUS,
+            focus:       ORBIT_FOCUS,
+            duration_ms: ORBIT_MOVE_DURATION_MS,
+            easing:      e,
         },
-        CameraMove {
-            target_translation: Vec3::new(0.0, ORBIT_HEIGHT, ORBIT_RADIUS) + ORBIT_FOCUS,
-            target_focus:       ORBIT_FOCUS,
-            duration_ms:        ORBIT_MOVE_DURATION_MS,
-            easing:             e,
+        CameraMove::ToPosition {
+            translation: Vec3::new(0.0, ORBIT_HEIGHT, ORBIT_RADIUS) + ORBIT_FOCUS,
+            focus:       ORBIT_FOCUS,
+            duration_ms: ORBIT_MOVE_DURATION_MS,
+            easing:      e,
         },
     ]);
 
@@ -550,10 +550,10 @@ fn log_camera_move_start(event: On<CameraMoveBegin>, time: Res<Time>, mut log: R
     log.push(
         format!(
             "CameraMoveBegin\n  translation={}\n  focus={}\n  duration={:.0}ms\n  easing={:?}",
-            fmt_vec3(event.target_translation),
-            fmt_vec3(event.target_focus),
-            event.duration_ms,
-            event.easing,
+            fmt_vec3(event.camera_move.translation()),
+            fmt_vec3(event.camera_move.focus()),
+            event.camera_move.duration_ms(),
+            event.camera_move.easing(),
         ),
         &time,
     );
