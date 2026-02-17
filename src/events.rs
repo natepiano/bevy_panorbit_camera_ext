@@ -10,7 +10,7 @@ use bevy::prelude::*;
 /// Fired when a `CameraMoveList` begins processing.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct AnimationStart {
+pub struct AnimationBegin {
     #[event_target]
     pub camera_entity: Entity,
 }
@@ -18,7 +18,7 @@ pub struct AnimationStart {
 /// Fired when a `CameraMoveList` finishes all its queued moves.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct AnimationComplete {
+pub struct AnimationEnd {
     #[event_target]
     pub camera_entity: Entity,
 }
@@ -30,7 +30,7 @@ pub struct AnimationComplete {
 /// Fired when an individual `CameraMove` begins.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct CameraMoveStart {
+pub struct CameraMoveBegin {
     #[event_target]
     pub camera_entity:      Entity,
     pub target_translation: Vec3,
@@ -42,7 +42,7 @@ pub struct CameraMoveStart {
 /// Fired when an individual `CameraMove` completes.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct CameraMoveComplete {
+pub struct CameraMoveEnd {
     #[event_target]
     pub camera_entity:      Entity,
     pub target_translation: Vec3,
@@ -58,15 +58,23 @@ pub struct CameraMoveComplete {
 /// Fired when a `ZoomToFit` operation begins.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct ZoomStart {
+pub struct ZoomBegin {
     #[event_target]
     pub camera_entity: Entity,
+    pub target_entity: Entity,
+    pub margin:        f32,
+    pub duration_ms:   f32,
+    pub easing:        EaseFunction,
 }
 
 /// Fired when a `ZoomToFit` operation completes (both animated and instant).
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct ZoomComplete {
+pub struct ZoomEnd {
     #[event_target]
     pub camera_entity: Entity,
+    pub target_entity: Entity,
+    pub margin:        f32,
+    pub duration_ms:   f32,
+    pub easing:        EaseFunction,
 }

@@ -8,9 +8,9 @@ use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
-use crate::events::AnimationComplete;
-use crate::events::CameraMoveComplete;
-use crate::events::CameraMoveStart;
+use crate::events::AnimationEnd;
+use crate::events::CameraMoveBegin;
+use crate::events::CameraMoveEnd;
 
 /// Individual camera movement with target position and duration
 #[derive(Clone, Reflect)]
@@ -94,7 +94,7 @@ pub fn process_camera_move_list(
         let Some(current_move) = queue.moves.front().cloned() else {
             // Queue is empty - fire completion event and remove component (observer will restore
             // smoothness)
-            commands.trigger(AnimationComplete {
+            commands.trigger(AnimationEnd {
                 camera_entity: entity,
             });
             commands.entity(entity).remove::<CameraMoveList>();
@@ -120,7 +120,7 @@ pub fn process_camera_move_list(
                     start_pitch:  pan_orbit.target_pitch,
                 };
 
-                commands.trigger(CameraMoveStart {
+                commands.trigger(CameraMoveBegin {
                     camera_entity:      entity,
                     target_translation: current_move.target_translation,
                     target_focus:       current_move.target_focus,
@@ -148,7 +148,7 @@ pub fn process_camera_move_list(
                 let canonical_radius = offset.length();
                 let canonical_yaw = offset.x.atan2(offset.z);
                 let horizontal_dist = offset.x.hypot(offset.z);
-                let canonical_pitch = (-offset.y).atan2(horizontal_dist);
+                let canonical_pitch = offset.y.atan2(horizontal_dist);
 
                 // Clamp t to exactly 1.0 if over (important for smooth completion)
                 let t_clamped = t.min(1.0);
@@ -192,7 +192,7 @@ pub fn process_camera_move_list(
 
                 // Check if move complete and advance to next
                 if is_final_frame {
-                    commands.trigger(CameraMoveComplete {
+                    commands.trigger(CameraMoveEnd {
                         camera_entity:      entity,
                         target_translation: current_move.target_translation,
                         target_focus:       current_move.target_focus,

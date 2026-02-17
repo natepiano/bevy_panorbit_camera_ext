@@ -54,7 +54,7 @@ commands.trigger(AnimateToFit::new(
 ));
 ```
 
-### `StartAnimation`
+### `PlayAnimation`
 
 Queue one or more camera moves for sequential playback with easing functions. Useful for cinematic sequences or splash screen animations.
 
@@ -67,30 +67,42 @@ let moves = VecDeque::from([
         easing:             EaseFunction::QuadraticInOut,
     },
 ]);
-commands.trigger(StartAnimation::new(camera_entity, moves));
+commands.trigger(PlayAnimation::new(camera_entity, moves));
+```
+
+### `SetFitTarget`
+
+Sets the debug visualization target entity on a camera without triggering any zoom or animation. This lets you inspect the debug gizmos (bounding box, margins, screen-space bounds) for an entity before deciding to invoke one of the zoom/animation behaviors.
+
+```rust
+// Preview what the debug visualization looks like for this entity
+commands.trigger(SetFitTarget::new(camera_entity, target_entity));
+
+// Later, when ready, trigger the actual zoom
+commands.trigger(ZoomToFit::new(camera_entity, target_entity, DEFAULT_MARGIN, 500.0));
 ```
 
 ### Lifecycle Events
 
-Every animation and zoom operation fires start/complete events that consumers can observe:
+Every animation and zoom operation fires begin/end events that consumers can observe:
 
-| Level | Start | Complete |
-|-------|-------|----------|
-| Zoom operation | `ZoomStart` | `ZoomComplete` |
-| Animation queue | `AnimationStart` | `AnimationComplete` |
-| Individual move | `CameraMoveStart` | `CameraMoveComplete` |
+| Level | Begin | End |
+|-------|-------|-----|
+| Zoom operation | `ZoomBegin` | `ZoomEnd` |
+| Animation queue | `AnimationBegin` | `AnimationEnd` |
+| Individual move | `CameraMoveBegin` | `CameraMoveEnd` |
 
-`CameraMoveStart` and `CameraMoveComplete` include the move data (`target_translation`, `target_focus`, `duration_ms`, `easing`).
+`CameraMoveBegin` includes the move data (`target_translation`, `target_focus`, `duration_ms`, `easing`).
 
 ```rust
-// React when a zoom-to-fit completes on a specific camera
-commands.entity(camera_entity).observe(|_: On<ZoomComplete>| {
+// React when a zoom-to-fit ends on a specific camera
+commands.entity(camera_entity).observe(|_: On<ZoomEnd>| {
     info!("Zoom finished!");
 });
 
 // React to each individual move in an animation queue
-commands.entity(camera_entity).observe(|event: On<CameraMoveComplete>| {
-    info!("Move to {:?} finished", event.target_focus);
+commands.entity(camera_entity).observe(|event: On<CameraMoveBegin>| {
+    info!("Move to {:?} started", event.target_focus);
 });
 ```
 

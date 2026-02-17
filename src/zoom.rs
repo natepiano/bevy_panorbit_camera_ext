@@ -1,9 +1,6 @@
 //! Zoom-to-fit convergence system for framing objects in the camera view
 
 use bevy::prelude::*;
-use bevy_panorbit_camera::PanOrbitCamera;
-
-use crate::events::ZoomComplete;
 
 // Algorithm constants (internal implementation details)
 pub const MAX_ITERATIONS: usize = 200;
@@ -14,17 +11,6 @@ pub const CENTERING_TOLERANCE: f32 = 0.0001; // normalized screen-space center o
 /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
 /// For example, a margin of 0.08 returns 1.087 (8% margin)
 pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
-
-/// Component that marks a camera as actively animating zoom-to-fit
-#[derive(Component, Debug)]
-pub struct ZoomToFitAnimation {
-    pub start_focus:   Vec3,
-    pub target_focus:  Vec3,
-    pub start_radius:  f32,
-    pub target_radius: f32,
-    pub duration_ms:   f32,
-    pub elapsed_ms:    f32,
-}
 
 /// Screen edge identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,42 +249,5 @@ impl ScreenSpaceBounds {
         let span_x = self.max_norm_x - self.min_norm_x;
         let span_y = self.max_norm_y - self.min_norm_y;
         (span_x, span_y)
-    }
-}
-
-/// System that animates zoom-to-fit by lerping to pre-calculated target
-pub fn zoom_to_fit_animation_system(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut ZoomToFitAnimation)>,
-) {
-    for (entity, mut camera, mut anim) in &mut camera_query {
-        // Update elapsed time (convert seconds to milliseconds)
-        anim.elapsed_ms += time.delta_secs() * 1000.0;
-
-        // Calculate lerp fraction (0.0 to 1.0)
-        let t = (anim.elapsed_ms / anim.duration_ms).min(1.0);
-
-        // Lerp both focus and radius toward target
-        camera.target_focus = anim.start_focus.lerp(anim.target_focus, t);
-        camera.target_radius = anim.start_radius.lerp(anim.target_radius, t);
-        camera.force_update = true;
-
-        // Animation complete?
-        if t >= 1.0 {
-            info!("Zoom-to-fit animation complete");
-
-            // Synchronize current values with target values
-            camera.focus = camera.target_focus;
-            camera.radius = Some(camera.target_radius);
-            camera.yaw = Some(camera.target_yaw);
-            camera.pitch = Some(camera.target_pitch);
-
-            // Fire completion event and remove animation component (triggers smoothness restore)
-            commands.trigger(ZoomComplete {
-                camera_entity: entity,
-            });
-            commands.entity(entity).remove::<ZoomToFitAnimation>();
-        }
     }
 }

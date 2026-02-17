@@ -15,29 +15,30 @@ mod zoom;
 
 // Public API - Completion events
 // Public API - Animation types
+// Internal - used by plugin, not for external use
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
-// Internal - used by plugin, not for external use
 use animation::process_camera_move_list;
-pub use events::AnimationComplete;
-pub use events::AnimationStart;
-pub use events::CameraMoveComplete;
-pub use events::CameraMoveStart;
-pub use events::ZoomComplete;
-pub use events::ZoomStart;
+pub use events::AnimationBegin;
+pub use events::AnimationEnd;
+pub use events::CameraMoveBegin;
+pub use events::CameraMoveEnd;
+pub use events::ZoomBegin;
+pub use events::ZoomEnd;
 pub use extension::AnimateToFit;
 // Public API - Traits
 pub use extension::PanOrbitCameraExt;
+pub use extension::PlayAnimation;
 pub use extension::SetFitTarget;
-pub use extension::StartAnimation;
+pub use extension::ZoomAnimationMarker;
 pub use extension::ZoomToFit;
 use extension::on_animate_to_fit;
+use extension::on_play_animation;
 use extension::on_set_fit_target;
-use extension::on_start_animation;
+use extension::on_zoom_animation_end;
 use extension::on_zoom_to_fit;
 pub use smoothness::SmoothnessStash;
-use smoothness::restore_smoothness_on_move_complete;
-use smoothness::restore_smoothness_on_zoom_complete;
+use smoothness::restore_smoothness_on_move_end;
 // Public API - Gizmo groups (for enabling/disabling)
 pub use visualization::FitTargetGizmo;
 pub use visualization::FitTargetMargins;
@@ -48,7 +49,6 @@ pub use visualization::FitTargetVisualizationPlugin;
 // Public API - Zoom types
 pub use zoom::Edge;
 pub use zoom::ScreenSpaceBounds;
-use zoom::zoom_to_fit_animation_system;
 
 /// Plugin that adds all camera extension functionality
 pub struct CameraExtPlugin;
@@ -57,17 +57,14 @@ impl Plugin for CameraExtPlugin {
     fn build(&self, app: &mut App) {
         app
             // Register observers for component lifecycle events
-            .add_observer(restore_smoothness_on_move_complete)
-            .add_observer(restore_smoothness_on_zoom_complete)
+            .add_observer(restore_smoothness_on_move_end)
             // Register observers for custom events
             .add_observer(on_zoom_to_fit)
-            .add_observer(on_start_animation)
+            .add_observer(on_play_animation)
             .add_observer(on_set_fit_target)
             .add_observer(on_animate_to_fit)
+            .add_observer(on_zoom_animation_end)
             // Add systems
-            .add_systems(
-                Update,
-                (process_camera_move_list, zoom_to_fit_animation_system),
-            );
+            .add_systems(Update, process_camera_move_list);
     }
 }

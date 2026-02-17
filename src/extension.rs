@@ -9,9 +9,10 @@ use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
-use crate::events::AnimationStart;
-use crate::events::ZoomComplete;
-use crate::events::ZoomStart;
+use crate::events::AnimationBegin;
+use crate::events::AnimationEnd;
+use crate::events::ZoomBegin;
+use crate::events::ZoomEnd;
 use crate::smoothness::SmoothnessStash;
 
 /// Marks the entity that the camera is currently fitted to.
@@ -95,7 +96,6 @@ impl PanOrbitCameraExt for PanOrbitCamera {
     ) -> Option<f32> {
         calculate_fit_radius(
             target_entity,
-            self.target_radius,
             self.target_yaw,
             self.target_pitch,
             margin,
@@ -127,29 +127,48 @@ pub struct ZoomToFit {
     target:        Entity,
     margin:        f32,
     duration_ms:   f32,
+    easing:        EaseFunction,
 }
 
 impl ZoomToFit {
-    pub const fn new(camera_entity: Entity, target: Entity, margin: f32, duration_ms: f32) -> Self {
+    pub const fn new(
+        camera_entity: Entity,
+        target: Entity,
+        margin: f32,
+        duration_ms: f32,
+        easing: EaseFunction,
+    ) -> Self {
         Self {
             camera_entity,
             target,
             margin,
             duration_ms,
+            easing,
         }
     }
 }
 
-/// Event to start a queued camera animation
+/// Marker component that tracks a zoom-to-fit operation routed through the animation system.
+/// When `AnimationEnd` fires on an entity with this marker, `ZoomEnd` is triggered and the
+/// marker is removed.
+#[derive(Component)]
+pub struct ZoomAnimationMarker {
+    pub target_entity: Entity,
+    pub margin:        f32,
+    pub duration_ms:   f32,
+    pub easing:        EaseFunction,
+}
+
+/// Event to play a queued camera animation
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct StartAnimation {
+pub struct PlayAnimation {
     #[event_target]
     camera_entity: Entity,
     moves:         VecDeque<CameraMove>,
 }
 
-impl StartAnimation {
+impl PlayAnimation {
     pub const fn new(camera_entity: Entity, moves: VecDeque<CameraMove>) -> Self {
         Self {
             camera_entity,
@@ -227,7 +246,6 @@ impl AnimateToFit {
 #[allow(clippy::too_many_arguments)]
 pub fn calculate_fit_radius(
     target_entity: Entity,
-    current_radius: f32,
     yaw: f32,
     pitch: f32,
     margin: f32,
@@ -239,7 +257,6 @@ pub fn calculate_fit_radius(
 ) -> Option<f32> {
     calculate_fit(
         target_entity,
-        current_radius,
         yaw,
         pitch,
         margin,
@@ -257,7 +274,6 @@ pub fn calculate_fit_radius(
 #[allow(clippy::too_many_arguments)]
 fn calculate_fit(
     target_entity: Entity,
-    current_radius: f32,
     yaw: f32,
     pitch: f32,
     margin: f32,
@@ -278,7 +294,6 @@ fn calculate_fit(
 
     calculate_convergence_radius(
         &corners,
-        current_radius,
         geometric_center,
         yaw,
         pitch,
@@ -300,7 +315,6 @@ fn calculate_fit(
 #[allow(clippy::too_many_arguments)]
 fn calculate_convergence_radius(
     corners: &[Vec3; 8],
-    initial_radius: f32,
     geometric_center: Vec3,
     yaw: f32,
     pitch: f32,
@@ -319,18 +333,17 @@ fn calculate_convergence_radius(
     let cam_up = rot * Vec3::Y;
 
     // Compute the object's bounding sphere radius from corners for sensible search bounds.
-    // At camera distance ≈ `object_radius`, the object overfills the screen, giving
-    // a tight lower bound. Upper bound must cover both the current position and objects
-    // much smaller than the current radius.
+    // The search range is based purely on object size to ensure deterministic results
+    // regardless of the camera's current radius.
     let object_radius = corners
         .iter()
         .map(|c| (*c - geometric_center).length())
         .fold(0.0_f32, f32::max);
 
     // Binary search for the correct radius
-    let mut min_radius = object_radius.min(initial_radius * 0.1);
-    let mut max_radius = (initial_radius * 10.0).max(object_radius * 100.0);
-    let mut best_radius = initial_radius;
+    let mut min_radius = object_radius * 0.1;
+    let mut max_radius = object_radius * 100.0;
+    let mut best_radius = object_radius * 2.0;
     let mut best_focus = geometric_center;
     let mut best_error = f32::INFINITY;
 
@@ -477,12 +490,19 @@ pub fn on_zoom_to_fit(
     let target_entity = zoom.target;
     let margin = zoom.margin;
     let duration_ms = zoom.duration_ms;
+    let easing = zoom.easing;
 
     let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
         return;
     };
 
-    commands.trigger(ZoomStart { camera_entity });
+    commands.trigger(ZoomBegin {
+        camera_entity,
+        target_entity,
+        margin,
+        duration_ms,
+        easing,
+    });
 
     info!(
         "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={duration_ms:.0}",
@@ -491,7 +511,6 @@ pub fn on_zoom_to_fit(
 
     let Some((target_radius, target_focus)) = calculate_fit(
         target_entity,
-        camera.target_radius,
         camera.target_yaw,
         camera.target_pitch,
         margin,
@@ -506,32 +525,72 @@ pub fn on_zoom_to_fit(
     };
 
     if duration_ms > 0.0 {
-        // Animated path: lerp from current to target over duration
-        use crate::zoom::ZoomToFitAnimation;
-        commands.entity(camera_entity).insert(ZoomToFitAnimation {
-            start_focus: camera.target_focus,
+        // Animated path: convert to a single CameraMove routed through PlayAnimation
+        let yaw_rot = Quat::from_axis_angle(Vec3::Y, camera.target_yaw);
+        let pitch_rot = Quat::from_axis_angle(Vec3::X, -camera.target_pitch);
+        let rotation = yaw_rot * pitch_rot;
+        let target_translation = target_focus + rotation * Vec3::new(0.0, 0.0, target_radius);
+
+        let moves = VecDeque::from([CameraMove {
+            target_translation,
             target_focus,
-            start_radius: camera.target_radius,
-            target_radius,
             duration_ms,
-            elapsed_ms: 0.0,
+            easing,
+        }]);
+
+        // Mark this as a zoom operation so AnimationEnd fires ZoomEnd
+        commands.entity(camera_entity).insert(ZoomAnimationMarker {
+            target_entity,
+            margin,
+            duration_ms,
+            easing,
         });
 
-        // Disable smoothness during animation
-        let stash = camera.stash_and_disable_smoothness();
-        commands.entity(camera_entity).insert(stash);
+        commands.trigger(PlayAnimation::new(camera_entity, moves));
     } else {
         // Instant path: snap directly to target
         camera.target_focus = target_focus;
         camera.target_radius = target_radius;
         camera.force_update = true;
-        commands.trigger(ZoomComplete { camera_entity });
+        commands.trigger(ZoomEnd {
+            camera_entity,
+            target_entity,
+            margin,
+            duration_ms,
+            easing,
+        });
     }
 
     // Mark current fit target for visualization
     commands
         .entity(camera_entity)
         .insert(CurrentFitTarget(target_entity));
+}
+
+/// Observer that fires `ZoomEnd` when an animation completes on an entity with a
+/// `ZoomAnimationMarker`, bridging the animation lifecycle to the zoom lifecycle.
+pub fn on_zoom_animation_end(
+    event: On<AnimationEnd>,
+    mut commands: Commands,
+    marker_query: Query<&ZoomAnimationMarker>,
+) {
+    let camera_entity = event.camera_entity;
+
+    let Ok(marker) = marker_query.get(camera_entity) else {
+        return;
+    };
+
+    commands.trigger(ZoomEnd {
+        camera_entity,
+        target_entity: marker.target_entity,
+        margin: marker.margin,
+        duration_ms: marker.duration_ms,
+        easing: marker.easing,
+    });
+
+    commands
+        .entity(camera_entity)
+        .remove::<ZoomAnimationMarker>();
 }
 
 /// Recursively searches for an `Aabb` component on an entity or its descendants
@@ -578,9 +637,9 @@ pub fn aabb_to_world_corners(aabb: &Aabb, global_transform: &GlobalTransform) ->
     corners.map(|corner| global_transform.transform_point(corner))
 }
 
-/// Observer for StartAnimation event - initiates camera animation sequence
-pub fn on_start_animation(
-    start: On<StartAnimation>,
+/// Observer for PlayAnimation event - initiates camera animation sequence
+pub fn on_play_animation(
+    start: On<PlayAnimation>,
     mut commands: Commands,
     mut camera_query: Query<&mut PanOrbitCamera>,
 ) {
@@ -590,7 +649,7 @@ pub fn on_start_animation(
         return;
     };
 
-    commands.trigger(AnimationStart {
+    commands.trigger(AnimationBegin {
         camera_entity: entity,
     });
 
@@ -629,13 +688,12 @@ pub fn on_animate_to_fit(
     let duration_ms = event.duration_ms;
     let easing = event.easing;
 
-    let Ok((camera, projection, cam)) = camera_query.get(camera_entity) else {
+    let Ok((_, projection, cam)) = camera_query.get(camera_entity) else {
         return;
     };
 
     let Some((target_radius, target_focus)) = calculate_fit(
         target_entity,
-        camera.target_radius,
         yaw,
         pitch,
         margin,
@@ -650,12 +708,11 @@ pub fn on_animate_to_fit(
     };
 
     // Convert spherical (yaw, pitch, radius) to cartesian position relative to focus
-    let target_translation = target_focus
-        + Vec3::new(
-            target_radius * pitch.cos() * yaw.sin(),
-            target_radius * pitch.sin(),
-            target_radius * pitch.cos() * yaw.cos(),
-        );
+    // Must match `PanOrbitCamera`'s `update_orbit_transform`: yaw around Y, then pitch around X
+    let yaw_rot = Quat::from_axis_angle(Vec3::Y, yaw);
+    let pitch_rot = Quat::from_axis_angle(Vec3::X, -pitch);
+    let rotation = yaw_rot * pitch_rot;
+    let target_translation = target_focus + rotation * Vec3::new(0.0, 0.0, target_radius);
 
     let moves = VecDeque::from([CameraMove {
         target_translation,
@@ -664,7 +721,7 @@ pub fn on_animate_to_fit(
         easing,
     }]);
 
-    commands.trigger(StartAnimation::new(camera_entity, moves));
+    commands.trigger(PlayAnimation::new(camera_entity, moves));
     commands
         .entity(camera_entity)
         .insert(CurrentFitTarget(target_entity));
