@@ -11,12 +11,23 @@ use bevy_panorbit_camera::PanOrbitCamera;
 use crate::extension::CurrentFitTarget;
 use crate::extension::aabb_to_world_corners;
 use crate::extension::find_descendant_aabb;
-use crate::zoom::ZoomConfig;
 
 /// Gizmo config group for fit target visualization.
 /// Toggle via `GizmoConfigStore::config_mut::<FitTargetGizmo>().enabled`
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct FitTargetGizmo {}
+
+/// Current screen-space margin percentages for the fit target.
+/// Updated every frame by the visualization system.
+/// Removed when fit target visualization is disabled.
+#[derive(Component, Reflect, Debug, Default, Clone)]
+#[reflect(Component)]
+pub struct FitTargetMargins {
+    pub left_pct:   f32,
+    pub right_pct:  f32,
+    pub top_pct:    f32,
+    pub bottom_pct: f32,
+}
 
 /// Component marking margin percentage labels
 #[derive(Component, Reflect)]
@@ -58,7 +69,6 @@ impl Plugin for FitTargetVisualizationPlugin {
     fn build(&self, app: &mut App) {
         app.init_gizmo_group::<FitTargetGizmo>()
             .init_resource::<FitTargetVisualizationConfig>()
-            .register_type::<MarginLabel>()
             .add_systems(Startup, init_fit_target_gizmo)
             .add_systems(
                 Update,
@@ -81,15 +91,20 @@ fn cleanup_labels_when_disabled(
 }
 
 /// Initialize the fit target gizmo config (disabled by default)
-fn init_fit_target_gizmo(mut config_store: ResMut<GizmoConfigStore>) {
+fn init_fit_target_gizmo(
+    mut config_store: ResMut<GizmoConfigStore>,
+    viz_config: Res<FitTargetVisualizationConfig>,
+) {
     let (config, _) = config_store.config_mut::<FitTargetGizmo>();
     config.enabled = false;
-    config.line.width = 2.0;
+    config.line.width = viz_config.line_width;
+    config.depth_bias = -1.0;
 }
 
-/// Syncs the gizmo render layers with the camera's render layers
+/// Syncs the gizmo render layers and line width with camera and visualization config
 fn sync_gizmo_render_layers(
     mut config_store: ResMut<GizmoConfigStore>,
+    viz_config: Res<FitTargetVisualizationConfig>,
     camera_query: Query<Option<&RenderLayers>, With<PanOrbitCamera>>,
 ) {
     let Ok(render_layers) = camera_query.single() else {
@@ -100,6 +115,7 @@ fn sync_gizmo_render_layers(
     if let Some(layers) = render_layers {
         gizmo_config.render_layers = layers.clone();
     }
+    gizmo_config.line.width = viz_config.line_width;
 }
 
 /// Boundary box edges
@@ -512,9 +528,14 @@ fn draw_fit_target_bounds(
     mut gizmos: Gizmos<FitTargetGizmo>,
     config: Res<FitTargetVisualizationConfig>,
     config_store: Res<GizmoConfigStore>,
-    zoom_config: Res<ZoomConfig>,
     camera_query: Query<
-        (&Camera, &GlobalTransform, &Projection, &CurrentFitTarget),
+        (
+            Entity,
+            &Camera,
+            &GlobalTransform,
+            &Projection,
+            &CurrentFitTarget,
+        ),
         With<PanOrbitCamera>,
     >,
     aabb_query: Query<&Aabb>,
@@ -522,7 +543,8 @@ fn draw_fit_target_bounds(
     global_transform_query: Query<&GlobalTransform>,
     mut label_query: Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
 ) {
-    let Ok((cam, cam_global, projection, current_target)) = camera_query.single() else {
+    let Ok((camera_entity, cam, cam_global, projection, current_target)) = camera_query.single()
+    else {
         return;
     };
 
@@ -562,6 +584,14 @@ fn draw_fit_target_bounds(
         return; // Target behind camera
     };
 
+    // Update margin component on camera entity for BRP inspection
+    commands.entity(camera_entity).insert(FitTargetMargins {
+        left_pct:   margins.margin_percentage(Edge::Left),
+        right_pct:  margins.margin_percentage(Edge::Right),
+        top_pct:    margins.margin_percentage(Edge::Top),
+        bottom_pct: margins.margin_percentage(Edge::Bottom),
+    });
+
     // Get camera basis vectors
     let cam_pos = cam_global.translation();
     let cam_rot = cam_global.rotation();
@@ -575,8 +605,8 @@ fn draw_fit_target_bounds(
     draw_rectangle(&mut gizmos, &rect_corners_world, &config);
 
     // Draw lines from visible boundary edges to screen edges and create margin labels
-    let h_balanced = margins.is_horizontally_balanced(zoom_config.margin_tolerance);
-    let v_balanced = margins.is_vertically_balanced(zoom_config.margin_tolerance);
+    let h_balanced = margins.is_horizontally_balanced(crate::zoom::TOLERANCE);
+    let v_balanced = margins.is_vertically_balanced(crate::zoom::TOLERANCE);
 
     // Track which edges are currently visible for label cleanup
     let mut visible_edges: Vec<Edge> = Vec::new();

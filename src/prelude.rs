@@ -9,6 +9,6 @@ pub use crate::extension::StartAnimation;
 pub use crate::extension::ZoomToFit;
 pub use crate::extension::ZoomToFitConfig;
 pub use crate::smoothness::SmoothnessStash;
+pub use crate::zoom::DEFAULT_MARGIN;
 pub use crate::zoom::Edge;
 pub use crate::zoom::ScreenSpaceBounds;
-pub use crate::zoom::ZoomConfig;

@@ -14,46 +14,43 @@ mod visualization;
 mod zoom;
 
 // Public API - Events
-pub use extension::SnapToFit;
-pub use extension::StartAnimation;
-pub use extension::ZoomToFit;
-
-// Public API - Traits
-pub use extension::PanOrbitCameraExt;
-
-// Public API - Components (for querying)
-pub use extension::CurrentFitTarget;
-
 // Public API - Animation types (used by prelude and external code)
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
-
-// Public API - Configuration components (used by prelude)
-pub use extension::ZoomToFitConfig;
-pub use smoothness::SmoothnessStash;
-
-// Public API - Utility functions
-pub use extension::calculate_fit_radius;
-
-// Public API - Configuration resources
-pub use visualization::FitTargetVisualizationConfig;
-pub use zoom::ZoomConfig;
-
-// Public API - Zoom types (used by prelude)
-pub use zoom::Edge;
-pub use zoom::ScreenSpaceBounds;
-
-// Public API - Gizmo groups (for enabling/disabling)
-pub use visualization::FitTargetGizmo;
-
-// Public API - Plugins
-pub use visualization::FitTargetVisualizationPlugin;
-
 // Internal - used by plugin, not for external use
 use animation::process_camera_move_list;
-use extension::{auto_add_zoom_config, on_snap_to_fit, on_start_animation, on_zoom_to_fit};
-use smoothness::{restore_smoothness_on_move_complete, restore_smoothness_on_zoom_complete};
-use zoom::zoom_to_fit_convergence_system;
+// Public API - Components (for querying)
+pub use extension::CurrentFitTarget;
+// Public API - Traits
+pub use extension::PanOrbitCameraExt;
+pub use extension::SetFitTarget;
+pub use extension::SnapToFit;
+pub use extension::StartAnimation;
+pub use extension::ZoomToFit;
+// Public API - Configuration components (used by prelude)
+pub use extension::ZoomToFitConfig;
+use extension::auto_add_zoom_config;
+// Public API - Utility functions
+pub use extension::calculate_fit_radius;
+use extension::on_set_fit_target;
+use extension::on_snap_to_fit;
+use extension::on_start_animation;
+use extension::on_zoom_to_fit;
+pub use smoothness::SmoothnessStash;
+use smoothness::restore_smoothness_on_move_complete;
+use smoothness::restore_smoothness_on_zoom_complete;
+// Public API - Gizmo groups (for enabling/disabling)
+pub use visualization::FitTargetGizmo;
+pub use visualization::FitTargetMargins;
+// Public API - Configuration resources
+pub use visualization::FitTargetVisualizationConfig;
+// Public API - Plugins
+pub use visualization::FitTargetVisualizationPlugin;
+// Public API - Zoom types (used by prelude)
+pub use zoom::DEFAULT_MARGIN;
+pub use zoom::Edge;
+pub use zoom::ScreenSpaceBounds;
+use zoom::zoom_to_fit_animation_system;
 
 /// Plugin that adds all camera extension functionality
 pub struct CameraExtPlugin;
@@ -69,12 +66,11 @@ impl Plugin for CameraExtPlugin {
             .add_observer(on_snap_to_fit)
             .add_observer(on_zoom_to_fit)
             .add_observer(on_start_animation)
+            .add_observer(on_set_fit_target)
             // Add systems
             .add_systems(
                 Update,
-                (process_camera_move_list, zoom_to_fit_convergence_system),
-            )
-            // Initialize resources
-            .init_resource::<ZoomConfig>();
+                (process_camera_move_list, zoom_to_fit_animation_system),
+            );
     }
 }

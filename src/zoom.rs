@@ -3,44 +3,26 @@
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
-/// Configuration for zoom-to-fit behavior
-#[derive(Resource, Reflect, Debug, Clone)]
-#[reflect(Resource)]
-pub struct ZoomConfig {
-    /// Maximum iterations before giving up
-    pub max_iterations:   usize,
-    /// Margin as fraction of screen (0.1 = 10% margin on each side)
-    pub margin:           f32,
-    /// Margin tolerance for convergence detection
-    pub margin_tolerance: f32,
-    /// Convergence rate for adjustments (0.30 = 30% per frame)
-    pub convergence_rate: f32,
-}
+// Algorithm constants (internal implementation details)
+pub const MAX_ITERATIONS: usize = 200;
+pub const TOLERANCE: f32 = 0.001; // 0.1% tolerance for convergence
 
-impl Default for ZoomConfig {
-    fn default() -> Self {
-        Self {
-            max_iterations:   200,
-            margin:           0.1,
-            margin_tolerance: 0.00001,
-            convergence_rate: 0.30,
-        }
-    }
-}
+/// Default margin for zoom-to-fit operations (0.1 = 10% margin on each side)
+pub const DEFAULT_MARGIN: f32 = 0.1;
 
-impl ZoomConfig {
-    /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
-    /// For example, a margin of 0.08 returns 1.087 (8% margin)
-    pub const fn zoom_margin_multiplier(&self) -> f32 { 1.0 / (1.0 - self.margin) }
-}
+/// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
+/// For example, a margin of 0.08 returns 1.087 (8% margin)
+pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
 
-/// Component that marks a camera as actively performing zoom-to-fit convergence
+/// Component that marks a camera as actively animating zoom-to-fit
 #[derive(Component, Debug)]
-pub struct ZoomToFitComponent {
-    pub target_corners:     [Vec3; 8],
-    pub iteration_count:    usize,
-    /// Final target focus calculated once at convergence start
-    pub final_target_focus: Option<Vec3>,
+pub struct ZoomToFitAnimation {
+    pub start_focus:   Vec3,
+    pub target_focus:  Vec3,
+    pub start_radius:  f32,
+    pub target_radius: f32,
+    pub duration_ms:   f32,
+    pub elapsed_ms:    f32,
 }
 
 /// Screen edge identifier
@@ -97,12 +79,25 @@ impl ScreenSpaceBounds {
         let half_tan_vfov = (perspective.fov * 0.5).tan();
         let half_tan_hfov = half_tan_vfov * viewport_aspect;
 
+        info!(
+            "Screen space: aspect={:.3} vfov={:.1}° half_tan_v={:.3} half_tan_h={:.3}",
+            viewport_aspect,
+            perspective.fov.to_degrees(),
+            half_tan_vfov,
+            half_tan_hfov
+        );
+
         // Get camera basis vectors from global transform
         let cam_pos = cam_global.translation();
         let cam_rot = cam_global.rotation();
         let cam_forward = cam_rot * Vec3::NEG_Z;
         let cam_right = cam_rot * Vec3::X;
         let cam_up = cam_rot * Vec3::Y;
+
+        info!(
+            "Camera basis: right={:.3?} up={:.3?} forward={:.3?}",
+            cam_right, cam_up, cam_forward
+        );
 
         // Project corners to screen space
         let mut min_norm_x = f32::INFINITY;
@@ -111,7 +106,7 @@ impl ScreenSpaceBounds {
         let mut max_norm_y = f32::NEG_INFINITY;
         let mut avg_depth = 0.0;
 
-        for corner in corners {
+        for (i, corner) in corners.iter().enumerate() {
             let relative = *corner - cam_pos;
             let depth = relative.dot(cam_forward);
 
@@ -126,6 +121,17 @@ impl ScreenSpaceBounds {
             let norm_x = x / depth;
             let norm_y = y / depth;
 
+            // Log ALL corners for the first call only
+            if i == 0 {
+                info!("=== ALL 8 CORNERS PROJECTION ===");
+            }
+            if i < 8 {
+                info!(
+                    "Corner[{}]: world=({:.0},{:.0},{:.0}) → screen_x={:.1} screen_y={:.1} depth={:.1} → norm=({:.3},{:.3})",
+                    i, corner.x, corner.y, corner.z, x, y, depth, norm_x, norm_y
+                );
+            }
+
             min_norm_x = min_norm_x.min(norm_x);
             max_norm_x = max_norm_x.max(norm_x);
             min_norm_y = min_norm_y.min(norm_y);
@@ -134,10 +140,39 @@ impl ScreenSpaceBounds {
         }
         avg_depth /= 8.0;
 
-        // Screen edges are at ±half_tan_hfov and ±half_tan_vfov
-        // Target edges (with margin) are at ±(half_tan_hfov / zoom_multiplier)
-        let target_edge_x = half_tan_hfov / zoom_multiplier;
-        let target_edge_y = half_tan_vfov / zoom_multiplier;
+        // Determine which dimension SHOULD constrain based on aspect ratios
+        let boundary_aspect = (max_norm_x - min_norm_x) / (max_norm_y - min_norm_y);
+        let screen_aspect = half_tan_hfov / half_tan_vfov;
+
+        // If boundary is wider (relative to height) than screen, width constrains
+        // If boundary is taller (relative to width) than screen, height constrains
+        let width_constrains = boundary_aspect > screen_aspect;
+
+        info!(
+            "Aspect ratios: boundary={:.3} screen={:.3} → {} constrains",
+            boundary_aspect,
+            screen_aspect,
+            if width_constrains {
+                "WIDTH (horizontal)"
+            } else {
+                "HEIGHT (vertical)"
+            }
+        );
+
+        // Calculate target edge for the constraining dimension only
+        let (target_edge_x, target_edge_y) = if width_constrains {
+            // Width constrains - set horizontal target, vertical gets extra space
+            let target_x = half_tan_hfov / zoom_multiplier;
+            // Vertical target is at the boundary's aspect ratio from horizontal
+            let target_y = target_x / boundary_aspect;
+            (target_x, target_y)
+        } else {
+            // Height constrains - set vertical target, horizontal gets extra space
+            let target_y = half_tan_vfov / zoom_multiplier;
+            // Horizontal target is at the boundary's aspect ratio from vertical
+            let target_x = target_y * boundary_aspect;
+            (target_x, target_y)
+        };
 
         // Calculate margins as distance from bounds to screen edges
         let left_margin = min_norm_x - (-half_tan_hfov);
@@ -148,6 +183,32 @@ impl ScreenSpaceBounds {
         // Target margins are the difference between screen edge and target edge
         let target_margin_x = half_tan_hfov - target_edge_x;
         let target_margin_y = half_tan_vfov - target_edge_y;
+
+        // Calculate which dimension constrains
+        let h_min = left_margin.min(right_margin);
+        let v_min = top_margin.min(bottom_margin);
+        let (constraining_dim, constraining_margin, target_for_constraining) = if h_min < v_min {
+            ("HORIZONTAL", h_min, target_margin_x)
+        } else {
+            ("VERTICAL", v_min, target_margin_y)
+        };
+
+        info!(
+            "Box extents: norm_x=[{:.3}, {:.3}] norm_y=[{:.3}, {:.3}]",
+            min_norm_x, max_norm_x, min_norm_y, max_norm_y
+        );
+        info!(
+            "Margins: L={:.3} R={:.3} T={:.3} B={:.3}",
+            left_margin, right_margin, top_margin, bottom_margin
+        );
+        info!(
+            "Targets: horiz={:.3} vert={:.3}",
+            target_margin_x, target_margin_y
+        );
+        info!(
+            "CONSTRAINING DIMENSION: {} (margin={:.3} target={:.3})",
+            constraining_dim, constraining_margin, target_for_constraining
+        );
 
         Some(Self {
             left_margin,
@@ -204,127 +265,36 @@ impl ScreenSpaceBounds {
     }
 }
 
-/// System that performs iterative zoom-to-fit convergence
-pub fn zoom_to_fit_convergence_system(
+/// System that animates zoom-to-fit by lerping to pre-calculated target
+pub fn zoom_to_fit_animation_system(
     mut commands: Commands,
-    zoom_config: Res<ZoomConfig>,
-    mut camera_query: Query<(
-        Entity,
-        &GlobalTransform,
-        &mut PanOrbitCamera,
-        &Projection,
-        &Camera,
-        &mut ZoomToFitComponent,
-    )>,
+    time: Res<Time>,
+    mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut ZoomToFitAnimation)>,
 ) {
-    for (entity, cam_global, mut pan_orbit, projection, camera, mut zoom_state) in &mut camera_query
-    {
-        let Projection::Perspective(perspective) = projection else {
-            continue;
-        };
+    for (entity, mut camera, mut anim) in &mut camera_query {
+        // Update elapsed time (convert seconds to milliseconds)
+        anim.elapsed_ms += time.delta_secs() * 1000.0;
 
-        // Get actual viewport aspect ratio
-        let aspect_ratio = if let Some(viewport_size) = camera.logical_viewport_size() {
-            viewport_size.x / viewport_size.y
-        } else {
-            perspective.aspect_ratio
-        };
+        // Calculate lerp fraction (0.0 to 1.0)
+        let t = (anim.elapsed_ms / anim.duration_ms).min(1.0);
 
-        // Calculate screen-space bounds and margins
-        let Some(bounds) = ScreenSpaceBounds::from_corners(
-            &zoom_state.target_corners,
-            cam_global,
-            perspective,
-            aspect_ratio,
-            zoom_config.zoom_margin_multiplier(),
-        ) else {
-            // Corners behind camera, move camera back
-            let corners_center = zoom_state.target_corners.iter().sum::<Vec3>() / 8.0;
-            pan_orbit.target_focus = corners_center;
-            pan_orbit.target_radius *= 1.5;
-            pan_orbit.force_update = true;
-            zoom_state.iteration_count += 1;
-            continue;
-        };
+        // Lerp both focus and radius toward target
+        camera.target_focus = anim.start_focus.lerp(anim.target_focus, t);
+        camera.target_radius = anim.start_radius.lerp(anim.target_radius, t);
+        camera.force_update = true;
 
-        // Calculate final target focus once on first iteration
-        if zoom_state.final_target_focus.is_none() {
-            let corners_center = zoom_state.target_corners.iter().sum::<Vec3>() / 8.0;
-            zoom_state.final_target_focus = Some(corners_center);
-        }
+        // Animation complete?
+        if t >= 1.0 {
+            info!("Zoom-to-fit animation complete");
 
-        let final_target_focus = zoom_state.final_target_focus.unwrap();
+            // Synchronize current values with target values
+            camera.focus = camera.target_focus;
+            camera.radius = Some(camera.target_radius);
+            camera.yaw = Some(camera.target_yaw);
+            camera.pitch = Some(camera.target_pitch);
 
-        // Calculate target radius (this changes based on current view)
-        let current_radius = pan_orbit.target_radius;
-        let (span_x, span_y) = bounds.span();
-        let target_radius =
-            calculate_target_radius(current_radius, span_x, span_y, &bounds, &zoom_config);
-
-        // Calculate deltas - focus moves toward final target, radius toward calculated target
-        let focus_delta = final_target_focus - pan_orbit.target_focus;
-        let radius_delta = target_radius - current_radius;
-
-        // Adaptive convergence rate: faster for small adjustments, slower for large changes
-        let base_rate = zoom_config.convergence_rate;
-        let radius_change_ratio = radius_delta.abs() / current_radius.max(0.1);
-        let focus_change_ratio = focus_delta.length() / current_radius.max(0.1);
-
-        // Speed up convergence when changes are small (less than 5% of current radius)
-        let adaptive_rate = if radius_change_ratio < 0.05 && focus_change_ratio < 0.05 {
-            0.8 // Fast convergence for fine adjustments
-        } else {
-            base_rate // Use configured rate for large changes
-        };
-
-        pan_orbit.target_focus += focus_delta * adaptive_rate;
-        pan_orbit.target_radius = current_radius + radius_delta * adaptive_rate;
-        pan_orbit.force_update = true;
-
-        // Check convergence
-        let balanced = bounds.is_balanced(zoom_config.margin_tolerance);
-        let fitted = bounds.is_fitted(zoom_config.margin_tolerance);
-
-        if balanced && fitted {
-            // Synchronize current values with target values to prevent interpolation
-            // artifacts when smoothness is restored after convergence
-            pan_orbit.focus = pan_orbit.target_focus;
-            pan_orbit.radius = Some(pan_orbit.target_radius);
-            pan_orbit.yaw = Some(pan_orbit.target_yaw);
-            pan_orbit.pitch = Some(pan_orbit.target_pitch);
-
-            commands.entity(entity).remove::<ZoomToFitComponent>();
-            continue;
-        }
-
-        zoom_state.iteration_count += 1;
-
-        // Stop if we hit max iterations
-        if zoom_state.iteration_count >= zoom_config.max_iterations {
-            commands.entity(entity).remove::<ZoomToFitComponent>();
+            // Remove animation component (triggers smoothness restore)
+            commands.entity(entity).remove::<ZoomToFitAnimation>();
         }
     }
-}
-
-/// Calculate target radius using span ratios
-fn calculate_target_radius(
-    current_radius: f32,
-    span_x: f32,
-    span_y: f32,
-    bounds: &ScreenSpaceBounds,
-    zoom_config: &ZoomConfig,
-) -> f32 {
-    // Target spans with proper margins
-    let target_span_x = 2.0 * bounds.half_tan_hfov / zoom_config.zoom_margin_multiplier();
-    let target_span_y = 2.0 * bounds.half_tan_vfov / zoom_config.zoom_margin_multiplier();
-
-    // Calculate ratios for each dimension
-    let ratio_x = span_x / target_span_x;
-    let ratio_y = span_y / target_span_y;
-
-    // Use the larger ratio (constraining dimension) to ensure both fit
-    let ratio = ratio_x.max(ratio_y);
-
-    // Calculate target radius from current radius and span ratio
-    current_radius * ratio
 }
