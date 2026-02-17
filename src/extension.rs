@@ -334,40 +334,6 @@ pub fn calculate_fit_radius(
     global_transform_query: &Query<&GlobalTransform>,
     meshes: &Assets<Mesh>,
 ) -> Option<f32> {
-    calculate_fit(
-        target_entity,
-        yaw,
-        pitch,
-        margin,
-        projection,
-        camera,
-        mesh_query,
-        children_query,
-        global_transform_query,
-        meshes,
-    )
-    .map(|(radius, _)| radius)
-}
-
-/// Calculates the optimal radius and centered focus to fit a target entity in the camera view.
-/// The focus is adjusted so the projected mesh silhouette is centered in the viewport.
-#[allow(clippy::too_many_arguments)]
-fn calculate_fit(
-    target_entity: Entity,
-    yaw: f32,
-    pitch: f32,
-    margin: f32,
-    projection: &Projection,
-    camera: &Camera,
-    mesh_query: &Query<&Mesh3d>,
-    children_query: &Query<&Children>,
-    global_transform_query: &Query<&GlobalTransform>,
-    meshes: &Assets<Mesh>,
-) -> Option<(f32, Vec3)> {
-    let Projection::Perspective(perspective) = projection else {
-        return None;
-    };
-
     let (vertices, geometric_center) = extract_mesh_vertices(
         target_entity,
         children_query,
@@ -376,8 +342,35 @@ fn calculate_fit(
         meshes,
     )?;
 
-    calculate_convergence_radius(
+    calculate_fit(
         &vertices,
+        geometric_center,
+        yaw,
+        pitch,
+        margin,
+        projection,
+        camera,
+    )
+    .map(|(radius, _)| radius)
+}
+
+/// Calculates the optimal radius and centered focus to fit pre-extracted vertices in the camera
+/// view. The focus is adjusted so the projected mesh silhouette is centered in the viewport.
+fn calculate_fit(
+    vertices: &[Vec3],
+    geometric_center: Vec3,
+    yaw: f32,
+    pitch: f32,
+    margin: f32,
+    projection: &Projection,
+    camera: &Camera,
+) -> Option<(f32, Vec3)> {
+    let Projection::Perspective(perspective) = projection else {
+        return None;
+    };
+
+    calculate_convergence_radius(
+        vertices,
         geometric_center,
         yaw,
         pitch,
@@ -396,7 +389,6 @@ fn calculate_fit(
 ///
 /// Note: A lateral camera shift doesn't change point depths, so the centering is geometrically
 /// exact for the constraining margin check.
-#[allow(clippy::too_many_arguments)]
 fn calculate_convergence_radius(
     points: &[Vec3],
     geometric_center: Vec3,
@@ -413,8 +405,6 @@ fn calculate_convergence_radius(
     let zoom_multiplier = zoom_margin_multiplier(margin);
 
     let rot = Quat::from_euler(EulerRot::YXZ, yaw, -pitch, 0.0);
-    let cam_right = rot * Vec3::X;
-    let cam_up = rot * Vec3::Y;
 
     // Compute the object's bounding sphere radius from points for sensible search bounds.
     // The search range is based purely on object size to ensure deterministic results
@@ -445,8 +435,6 @@ fn calculate_convergence_radius(
             geometric_center,
             test_radius,
             rot,
-            cam_right,
-            cam_up,
             perspective,
             aspect_ratio,
         );
@@ -524,20 +512,20 @@ fn calculate_convergence_radius(
 /// screen space, so the screen-space center of two points at depths `d1` and `d2` shifts
 /// by `-delta * (1/d1 + 1/d2) / 2`. The harmonic mean `2*d1*d2/(d1+d2)` inverts this
 /// exactly. Convergence typically takes 1-2 iterations.
-#[allow(clippy::too_many_arguments)]
 fn refine_focus_centering(
     points: &[Vec3],
     initial_focus: Vec3,
     radius: f32,
     rot: Quat,
-    cam_right: Vec3,
-    cam_up: Vec3,
     perspective: &PerspectiveProjection,
     aspect_ratio: f32,
 ) -> Vec3 {
     use crate::zoom::CENTERING_MAX_ITERATIONS;
     use crate::zoom::CENTERING_TOLERANCE;
     use crate::zoom::ScreenSpaceBounds;
+
+    let cam_right = rot * Vec3::X;
+    let cam_up = rot * Vec3::Y;
 
     let mut focus = initial_focus;
     for _ in 0..CENTERING_MAX_ITERATIONS {
@@ -594,17 +582,25 @@ pub fn on_zoom_to_fit(
         camera.target_yaw, camera.target_pitch, camera.target_focus, camera.target_radius
     );
 
-    let Some((target_radius, target_focus)) = calculate_fit(
+    let Some((vertices, geometric_center)) = extract_mesh_vertices(
         target_entity,
+        &children_query,
+        &mesh_query,
+        &global_transform_query,
+        &meshes,
+    ) else {
+        warn!("ZoomToFit: Failed to extract mesh vertices for entity {target_entity:?}");
+        return;
+    };
+
+    let Some((target_radius, target_focus)) = calculate_fit(
+        &vertices,
+        geometric_center,
         camera.target_yaw,
         camera.target_pitch,
         margin,
         projection,
         cam,
-        &mesh_query,
-        &children_query,
-        &global_transform_query,
-        &meshes,
     ) else {
         warn!("ZoomToFit: Failed to calculate target radius for entity {target_entity:?}");
         return;
@@ -711,17 +707,25 @@ pub fn on_animate_to_fit(
         return;
     };
 
-    let Some((target_radius, target_focus)) = calculate_fit(
+    let Some((vertices, geometric_center)) = extract_mesh_vertices(
         target_entity,
+        &children_query,
+        &mesh_query,
+        &global_transform_query,
+        &meshes,
+    ) else {
+        warn!("AnimateToFit: Failed to extract mesh vertices for entity {target_entity:?}");
+        return;
+    };
+
+    let Some((target_radius, target_focus)) = calculate_fit(
+        &vertices,
+        geometric_center,
         yaw,
         pitch,
         margin,
         projection,
         cam,
-        &mesh_query,
-        &children_query,
-        &global_transform_query,
-        &meshes,
     ) else {
         warn!("AnimateToFit: Failed to calculate fit for entity {target_entity:?}");
         return;

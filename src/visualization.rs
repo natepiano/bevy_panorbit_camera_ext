@@ -163,6 +163,27 @@ struct ScreenSpaceBoundary {
     half_tan_hfov: f32,
 }
 
+/// Camera basis vectors extracted from a `GlobalTransform`.
+/// Bundles the position and orientation vectors that are frequently passed together.
+struct CameraBasis {
+    pos:     Vec3,
+    right:   Vec3,
+    up:      Vec3,
+    forward: Vec3,
+}
+
+impl CameraBasis {
+    fn from_global_transform(global: &GlobalTransform) -> Self {
+        let rot = global.rotation();
+        Self {
+            pos:     global.translation(),
+            right:   rot * Vec3::X,
+            up:      rot * Vec3::Y,
+            forward: rot * Vec3::NEG_Z,
+        }
+    }
+}
+
 impl ScreenSpaceBoundary {
     /// Creates screen space margins from a camera's view of target points.
     /// Returns `None` if any point is behind the camera.
@@ -304,18 +325,10 @@ impl ScreenSpaceBoundary {
     }
 
     /// Converts normalized screen-space coordinates to world space
-    fn normalized_to_world(
-        &self,
-        norm_x: f32,
-        norm_y: f32,
-        cam_pos: Vec3,
-        cam_right: Vec3,
-        cam_up: Vec3,
-        cam_forward: Vec3,
-    ) -> Vec3 {
+    fn normalized_to_world(&self, norm_x: f32, norm_y: f32, cam: &CameraBasis) -> Vec3 {
         let world_x = norm_x * self.avg_depth;
         let world_y = norm_y * self.avg_depth;
-        cam_pos + cam_right * world_x + cam_up * world_y + cam_forward * self.avg_depth
+        cam.pos + cam.right * world_x + cam.up * world_y + cam.forward * self.avg_depth
     }
 
     /// Returns the margin percentage for a given edge.
@@ -386,23 +399,17 @@ fn convex_hull_2d(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
 }
 
 /// Projects world-space vertices to 2D normalized screen space
-fn project_vertices_to_2d(
-    vertices: &[Vec3],
-    cam_pos: Vec3,
-    cam_forward: Vec3,
-    cam_right: Vec3,
-    cam_up: Vec3,
-) -> Vec<(f32, f32)> {
+fn project_vertices_to_2d(vertices: &[Vec3], cam: &CameraBasis) -> Vec<(f32, f32)> {
     vertices
         .iter()
         .filter_map(|v| {
-            let relative = *v - cam_pos;
-            let depth = relative.dot(cam_forward);
+            let relative = *v - cam.pos;
+            let depth = relative.dot(cam.forward);
             if depth <= 0.1 {
                 return None;
             }
-            let norm_x = relative.dot(cam_right) / depth;
-            let norm_y = relative.dot(cam_up) / depth;
+            let norm_x = relative.dot(cam.right) / depth;
+            let norm_y = relative.dot(cam.up) / depth;
             Some((norm_x, norm_y))
         })
         .collect()
@@ -413,10 +420,7 @@ fn draw_silhouette_polygon(
     gizmos: &mut Gizmos<FitTargetGizmo>,
     hull_points: &[(f32, f32)],
     boundary: &ScreenSpaceBoundary,
-    cam_pos: Vec3,
-    cam_right: Vec3,
-    cam_up: Vec3,
-    cam_forward: Vec3,
+    cam: &CameraBasis,
     color: Color,
 ) {
     if hull_points.len() < 2 {
@@ -425,22 +429,8 @@ fn draw_silhouette_polygon(
 
     for i in 0..hull_points.len() {
         let next = (i + 1) % hull_points.len();
-        let start = boundary.normalized_to_world(
-            hull_points[i].0,
-            hull_points[i].1,
-            cam_pos,
-            cam_right,
-            cam_up,
-            cam_forward,
-        );
-        let end = boundary.normalized_to_world(
-            hull_points[next].0,
-            hull_points[next].1,
-            cam_pos,
-            cam_right,
-            cam_up,
-            cam_forward,
-        );
+        let start = boundary.normalized_to_world(hull_points[i].0, hull_points[i].1, cam);
+        let end = boundary.normalized_to_world(hull_points[next].0, hull_points[next].1, cam);
         gizmos.line(start, end, color);
     }
 }
@@ -475,46 +465,12 @@ const fn calculate_edge_color(
 }
 
 /// Creates the 4 corners of the screen-aligned boundary rectangle in world space
-fn create_screen_corners(
-    margins: &ScreenSpaceBoundary,
-    cam_pos: Vec3,
-    cam_right: Vec3,
-    cam_up: Vec3,
-    cam_forward: Vec3,
-) -> [Vec3; 4] {
+fn create_screen_corners(margins: &ScreenSpaceBoundary, cam: &CameraBasis) -> [Vec3; 4] {
     [
-        margins.normalized_to_world(
-            margins.min_norm_x,
-            margins.min_norm_y,
-            cam_pos,
-            cam_right,
-            cam_up,
-            cam_forward,
-        ),
-        margins.normalized_to_world(
-            margins.max_norm_x,
-            margins.min_norm_y,
-            cam_pos,
-            cam_right,
-            cam_up,
-            cam_forward,
-        ),
-        margins.normalized_to_world(
-            margins.max_norm_x,
-            margins.max_norm_y,
-            cam_pos,
-            cam_right,
-            cam_up,
-            cam_forward,
-        ),
-        margins.normalized_to_world(
-            margins.min_norm_x,
-            margins.max_norm_y,
-            cam_pos,
-            cam_right,
-            cam_up,
-            cam_forward,
-        ),
+        margins.normalized_to_world(margins.min_norm_x, margins.min_norm_y, cam),
+        margins.normalized_to_world(margins.max_norm_x, margins.min_norm_y, cam),
+        margins.normalized_to_world(margins.max_norm_x, margins.max_norm_y, cam),
+        margins.normalized_to_world(margins.min_norm_x, margins.max_norm_y, cam),
     ]
 }
 
@@ -741,11 +697,7 @@ fn draw_fit_target_bounds(
     };
 
     // Get camera basis vectors
-    let cam_pos = cam_global.translation();
-    let cam_rot = cam_global.rotation();
-    let cam_forward = cam_rot * Vec3::NEG_Z;
-    let cam_right = cam_rot * Vec3::X;
-    let cam_up = cam_rot * Vec3::Y;
+    let cam_basis = CameraBasis::from_global_transform(cam_global);
 
     // Get actual viewport aspect ratio
     let aspect_ratio = if let Some(viewport_size) = cam.logical_viewport_size() {
@@ -770,22 +722,18 @@ fn draw_fit_target_bounds(
     });
 
     // Draw the screen-aligned bounding rectangle
-    let rect_corners_world =
-        create_screen_corners(&margins, cam_pos, cam_right, cam_up, cam_forward);
+    let rect_corners_world = create_screen_corners(&margins, &cam_basis);
     draw_rectangle(&mut gizmos, &rect_corners_world, &config);
 
     // Draw silhouette polygon (convex hull) when visualization is enabled
     if visualization_enabled {
-        let projected = project_vertices_to_2d(&vertices, cam_pos, cam_forward, cam_right, cam_up);
+        let projected = project_vertices_to_2d(&vertices, &cam_basis);
         let hull = convex_hull_2d(&projected);
         draw_silhouette_polygon(
             &mut gizmos,
             &hull,
             &margins,
-            cam_pos,
-            cam_right,
-            cam_up,
-            cam_forward,
+            &cam_basis,
             config.silhouette_color,
         );
     }
@@ -819,22 +767,8 @@ fn draw_fit_target_bounds(
 
             let (screen_x, screen_y) = margins.screen_edge_center(edge);
 
-            let boundary_pos = margins.normalized_to_world(
-                boundary_x,
-                boundary_y,
-                cam_pos,
-                cam_right,
-                cam_up,
-                cam_forward,
-            );
-            let screen_pos = margins.normalized_to_world(
-                screen_x,
-                screen_y,
-                cam_pos,
-                cam_right,
-                cam_up,
-                cam_forward,
-            );
+            let boundary_pos = margins.normalized_to_world(boundary_x, boundary_y, &cam_basis);
+            let screen_pos = margins.normalized_to_world(screen_x, screen_y, &cam_basis);
 
             let color = calculate_edge_color(edge, h_balanced, v_balanced, &config);
             gizmos.line(boundary_pos, screen_pos, color);

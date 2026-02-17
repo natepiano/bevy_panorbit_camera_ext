@@ -57,7 +57,6 @@ pub struct ScreenSpaceBounds {
 impl ScreenSpaceBounds {
     /// Creates screen space bounds from a camera's view of a set of points.
     /// Returns `None` if any point is behind the camera.
-    #[allow(clippy::too_many_arguments)]
     pub fn from_points(
         points: &[Vec3],
         cam_global: &GlobalTransform,
