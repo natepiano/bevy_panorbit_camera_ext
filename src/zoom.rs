@@ -11,9 +11,6 @@ pub const TOLERANCE: f32 = 0.001; // 0.1% tolerance for convergence
 pub const CENTERING_MAX_ITERATIONS: usize = 10;
 pub const CENTERING_TOLERANCE: f32 = 0.0001; // normalized screen-space center offset
 
-/// Default margin for zoom-to-fit operations (0.1 = 10% margin on each side)
-pub const DEFAULT_MARGIN: f32 = 0.1;
-
 /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
 /// For example, a margin of 0.08 returns 1.087 (8% margin)
 pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
@@ -298,7 +295,9 @@ pub fn zoom_to_fit_animation_system(
             camera.pitch = Some(camera.target_pitch);
 
             // Fire completion event and remove animation component (triggers smoothness restore)
-            commands.trigger(ZoomComplete { entity });
+            commands.trigger(ZoomComplete {
+                camera_entity: entity,
+            });
             commands.entity(entity).remove::<ZoomToFitAnimation>();
         }
     }

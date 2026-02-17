@@ -114,16 +114,17 @@ impl PanOrbitCameraExt for PanOrbitCamera {
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct ZoomToFit {
-    pub entity:      Entity,
-    pub target:      Entity,
-    pub margin:      f32,
-    pub duration_ms: f32,
+    #[event_target]
+    camera_entity: Entity,
+    target:        Entity,
+    margin:        f32,
+    duration_ms:   f32,
 }
 
 impl ZoomToFit {
-    pub const fn new(entity: Entity, target: Entity, margin: f32, duration_ms: f32) -> Self {
+    pub const fn new(camera_entity: Entity, target: Entity, margin: f32, duration_ms: f32) -> Self {
         Self {
-            entity,
+            camera_entity,
             target,
             margin,
             duration_ms,
@@ -135,24 +136,36 @@ impl ZoomToFit {
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct StartAnimation {
-    pub entity: Entity,
-    pub moves:  VecDeque<CameraMove>,
+    #[event_target]
+    camera_entity: Entity,
+    moves:         VecDeque<CameraMove>,
 }
 
 impl StartAnimation {
-    pub const fn new(entity: Entity, moves: VecDeque<CameraMove>) -> Self { Self { entity, moves } }
+    pub const fn new(camera_entity: Entity, moves: VecDeque<CameraMove>) -> Self {
+        Self {
+            camera_entity,
+            moves,
+        }
+    }
 }
 
 /// Event to set the target entity for fit visualization debugging
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct SetFitTarget {
-    pub entity: Entity,
-    pub target: Entity,
+    #[event_target]
+    camera_entity: Entity,
+    target:        Entity,
 }
 
 impl SetFitTarget {
-    pub const fn new(entity: Entity, target: Entity) -> Self { Self { entity, target } }
+    pub const fn new(camera_entity: Entity, target: Entity) -> Self {
+        Self {
+            camera_entity,
+            target,
+        }
+    }
 }
 
 /// Event to animate the camera to a specific orientation and fit a target entity in view.
@@ -160,18 +173,19 @@ impl SetFitTarget {
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct AnimateToFit {
-    pub entity:      Entity,
-    pub target:      Entity,
-    pub yaw:         f32,
-    pub pitch:       f32,
-    pub margin:      f32,
-    pub duration_ms: f32,
-    pub easing:      EaseFunction,
+    #[event_target]
+    camera_entity: Entity,
+    target:        Entity,
+    yaw:           f32,
+    pitch:         f32,
+    margin:        f32,
+    duration_ms:   f32,
+    easing:        EaseFunction,
 }
 
 impl AnimateToFit {
     pub const fn new(
-        entity: Entity,
+        camera_entity: Entity,
         target: Entity,
         yaw: f32,
         pitch: f32,
@@ -180,7 +194,7 @@ impl AnimateToFit {
         easing: EaseFunction,
     ) -> Self {
         Self {
-            entity,
+            camera_entity,
             target,
             yaw,
             pitch,
@@ -445,7 +459,7 @@ pub fn on_zoom_to_fit(
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
 ) {
-    let camera_entity = zoom.entity;
+    let camera_entity = zoom.camera_entity;
     let target_entity = zoom.target;
     let margin = zoom.margin;
     let duration_ms = zoom.duration_ms;
@@ -495,9 +509,7 @@ pub fn on_zoom_to_fit(
         camera.target_focus = target_focus;
         camera.target_radius = target_radius;
         camera.force_update = true;
-        commands.trigger(ZoomComplete {
-            entity: camera_entity,
-        });
+        commands.trigger(ZoomComplete { camera_entity });
     }
 
     // Mark current fit target for visualization
@@ -556,7 +568,7 @@ pub fn on_start_animation(
     mut commands: Commands,
     mut camera_query: Query<&mut PanOrbitCamera>,
 ) {
-    let entity = start.entity;
+    let entity = start.camera_entity;
 
     let Ok(mut camera) = camera_query.get_mut(entity) else {
         return;
@@ -575,7 +587,7 @@ pub fn on_start_animation(
 /// Observer for SetFitTarget event - sets the target entity for fit visualization
 pub fn on_set_fit_target(set_target: On<SetFitTarget>, mut commands: Commands) {
     commands
-        .entity(set_target.entity)
+        .entity(set_target.camera_entity)
         .insert(CurrentFitTarget(set_target.target));
 }
 
@@ -589,7 +601,7 @@ pub fn on_animate_to_fit(
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
 ) {
-    let camera_entity = event.entity;
+    let camera_entity = event.camera_entity;
     let target_entity = event.target;
     let yaw = event.yaw;
     let pitch = event.pitch;

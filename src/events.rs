@@ -7,7 +7,8 @@ use bevy::prelude::*;
 #[reflect(Event, FromReflect)]
 pub struct AnimationComplete {
     /// The camera entity whose animation completed.
-    pub entity: Entity,
+    #[event_target]
+    pub(crate) camera_entity: Entity,
 }
 
 /// Fired when a `ZoomToFit` operation completes (both animated and instant).
@@ -15,5 +16,6 @@ pub struct AnimationComplete {
 #[reflect(Event, FromReflect)]
 pub struct ZoomComplete {
     /// The camera entity whose zoom completed.
-    pub entity: Entity,
+    #[event_target]
+    pub(crate) camera_entity: Entity,
 }

@@ -92,7 +92,9 @@ pub fn process_camera_move_list(
         let Some(current_move) = queue.moves.front().cloned() else {
             // Queue is empty - fire completion event and remove component (observer will restore
             // smoothness)
-            commands.trigger(AnimationComplete { entity });
+            commands.trigger(AnimationComplete {
+                camera_entity: entity,
+            });
             commands.entity(entity).remove::<CameraMoveList>();
             continue;
         };
