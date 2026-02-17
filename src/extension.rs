@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 
-use bevy::camera::primitives::Aabb;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
@@ -36,13 +35,13 @@ pub trait PanOrbitCameraExt {
     /// Uses the current camera orientation (`target_yaw`, `target_pitch`, `target_radius`).
     ///
     /// # Parameters
-    /// - `target_entity`: Entity with `Aabb` to fit in view
+    /// - `target_entity`: Entity with a `Mesh3d` to fit in view
     /// - `margin`: Margin as fraction of screen (0.1 = 10% margin on each side)
     /// - `projection`: Camera projection
     /// - `camera`: Camera component
-    /// - Query references for `Aabb`, `Children`, and `GlobalTransform`
+    /// - Query references for `Mesh3d`, `Children`, `GlobalTransform`, and `Assets<Mesh>`
     ///
-    /// Returns `Some(radius)` if successful, `None` if target has no `Aabb` or calculation fails.
+    /// Returns `Some(radius)` if successful, `None` if target has no mesh or calculation fails.
     #[allow(clippy::too_many_arguments)]
     fn calculate_fit_radius(
         &self,
@@ -50,9 +49,10 @@ pub trait PanOrbitCameraExt {
         margin: f32,
         projection: &Projection,
         camera: &Camera,
-        aabb_query: &Query<&Aabb>,
+        mesh_query: &Query<&Mesh3d>,
         children_query: &Query<&Children>,
         global_transform_query: &Query<&GlobalTransform>,
+        meshes: &Assets<Mesh>,
     ) -> Option<f32>;
 }
 
@@ -89,9 +89,10 @@ impl PanOrbitCameraExt for PanOrbitCamera {
         margin: f32,
         projection: &Projection,
         camera: &Camera,
-        aabb_query: &Query<&Aabb>,
+        mesh_query: &Query<&Mesh3d>,
         children_query: &Query<&Children>,
         global_transform_query: &Query<&GlobalTransform>,
+        meshes: &Assets<Mesh>,
     ) -> Option<f32> {
         calculate_fit_radius(
             target_entity,
@@ -100,9 +101,10 @@ impl PanOrbitCameraExt for PanOrbitCamera {
             margin,
             projection,
             camera,
-            aabb_query,
+            mesh_query,
             children_query,
             global_transform_query,
+            meshes,
         )
     }
 }
@@ -234,13 +236,65 @@ impl AnimateToFit {
 }
 
 // ============================================================================
+// Mesh Vertex Extraction
+// ============================================================================
+
+/// Recursively searches for a `Mesh3d` component on an entity or its descendants.
+pub(crate) fn find_descendant_mesh(
+    entity: Entity,
+    children_query: &Query<&Children>,
+    mesh_query: &Query<&Mesh3d>,
+) -> Option<Entity> {
+    if mesh_query.get(entity).is_ok() {
+        return Some(entity);
+    }
+
+    if let Ok(children) = children_query.get(entity) {
+        for child in children.iter() {
+            if let Some(result) = find_descendant_mesh(child, children_query, mesh_query) {
+                return Some(result);
+            }
+        }
+    }
+
+    None
+}
+
+/// Extracts world-space vertex positions from the mesh on an entity or its descendants.
+/// Returns `(vertices, geometric_center)` where `geometric_center` is the entity's
+/// `GlobalTransform` translation.
+pub(crate) fn extract_mesh_vertices(
+    entity: Entity,
+    children_query: &Query<&Children>,
+    mesh_query: &Query<&Mesh3d>,
+    global_transform_query: &Query<&GlobalTransform>,
+    meshes: &Assets<Mesh>,
+) -> Option<(Vec<Vec3>, Vec3)> {
+    let mesh_entity = find_descendant_mesh(entity, children_query, mesh_query)?;
+    let mesh3d = mesh_query.get(mesh_entity).ok()?;
+    let mesh = meshes.get(&mesh3d.0)?;
+    let global_transform = global_transform_query.get(mesh_entity).ok()?;
+
+    let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION)?.as_float3()?;
+
+    let vertices: Vec<Vec3> = positions
+        .iter()
+        .map(|pos| global_transform.transform_point(Vec3::from_array(*pos)))
+        .collect();
+
+    let geometric_center = global_transform.translation();
+
+    Some((vertices, geometric_center))
+}
+
+// ============================================================================
 // Observers
 // ============================================================================
 
 /// Calculates the optimal radius to fit a target entity in the camera view.
 /// Uses the convergence algorithm from the given camera orientation (`yaw`, `pitch`).
 ///
-/// Returns `Some(radius)` if successful, `None` if the target has no `Aabb` or the
+/// Returns `Some(radius)` if successful, `None` if the target has no mesh or the
 /// calculation fails.
 #[allow(clippy::too_many_arguments)]
 pub fn calculate_fit_radius(
@@ -250,9 +304,10 @@ pub fn calculate_fit_radius(
     margin: f32,
     projection: &Projection,
     camera: &Camera,
-    aabb_query: &Query<&Aabb>,
+    mesh_query: &Query<&Mesh3d>,
     children_query: &Query<&Children>,
     global_transform_query: &Query<&GlobalTransform>,
+    meshes: &Assets<Mesh>,
 ) -> Option<f32> {
     calculate_fit(
         target_entity,
@@ -261,15 +316,16 @@ pub fn calculate_fit_radius(
         margin,
         projection,
         camera,
-        aabb_query,
+        mesh_query,
         children_query,
         global_transform_query,
+        meshes,
     )
     .map(|(radius, _)| radius)
 }
 
 /// Calculates the optimal radius and centered focus to fit a target entity in the camera view.
-/// The focus is adjusted so the projected box is centered in the viewport.
+/// The focus is adjusted so the projected mesh silhouette is centered in the viewport.
 #[allow(clippy::too_many_arguments)]
 fn calculate_fit(
     target_entity: Entity,
@@ -278,21 +334,25 @@ fn calculate_fit(
     margin: f32,
     projection: &Projection,
     camera: &Camera,
-    aabb_query: &Query<&Aabb>,
+    mesh_query: &Query<&Mesh3d>,
     children_query: &Query<&Children>,
     global_transform_query: &Query<&GlobalTransform>,
+    meshes: &Assets<Mesh>,
 ) -> Option<(f32, Vec3)> {
     let Projection::Perspective(perspective) = projection else {
         return None;
     };
 
-    let (aabb_entity, aabb) = find_descendant_aabb(target_entity, children_query, aabb_query)?;
-    let global_transform = global_transform_query.get(aabb_entity).ok()?;
-    let corners = aabb_to_world_corners(aabb, global_transform);
-    let geometric_center = global_transform.translation();
+    let (vertices, geometric_center) = extract_mesh_vertices(
+        target_entity,
+        children_query,
+        mesh_query,
+        global_transform_query,
+        meshes,
+    )?;
 
     calculate_convergence_radius(
-        &corners,
+        &vertices,
         geometric_center,
         yaw,
         pitch,
@@ -302,18 +362,18 @@ fn calculate_fit(
     )
 }
 
-/// Calculates the radius and centered focus needed to fit corners in view.
+/// Calculates the radius and centered focus needed to fit points in view.
 ///
-/// For each candidate radius, computes the focus that centers the projected box in the viewport
-/// (since the geometric center doesn't project to screen center from off-axis angles), then
-/// evaluates margins at that centered position. Returns the `(radius, focus)` pair where the
-/// constraining margin equals the target and the box is centered.
+/// For each candidate radius, computes the focus that centers the projected silhouette in the
+/// viewport (since the geometric center doesn't project to screen center from off-axis angles),
+/// then evaluates margins at that centered position. Returns the `(radius, focus)` pair where
+/// the constraining margin equals the target and the silhouette is centered.
 ///
-/// Note: A lateral camera shift doesn't change corner depths, so the centering is geometrically
+/// Note: A lateral camera shift doesn't change point depths, so the centering is geometrically
 /// exact for the constraining margin check.
 #[allow(clippy::too_many_arguments)]
 fn calculate_convergence_radius(
-    corners: &[Vec3; 8],
+    points: &[Vec3],
     geometric_center: Vec3,
     yaw: f32,
     pitch: f32,
@@ -331,10 +391,10 @@ fn calculate_convergence_radius(
     let cam_right = rot * Vec3::X;
     let cam_up = rot * Vec3::Y;
 
-    // Compute the object's bounding sphere radius from corners for sensible search bounds.
+    // Compute the object's bounding sphere radius from points for sensible search bounds.
     // The search range is based purely on object size to ensure deterministic results
     // regardless of the camera's current radius.
-    let object_radius = corners
+    let object_radius = points
         .iter()
         .map(|c| (*c - geometric_center).length())
         .fold(0.0_f32, f32::max);
@@ -356,7 +416,7 @@ fn calculate_convergence_radius(
 
         // Step 1: find the centered focus using accurate depth-based centering
         let centered_focus = refine_focus_centering(
-            corners,
+            points,
             geometric_center,
             test_radius,
             rot,
@@ -371,15 +431,15 @@ fn calculate_convergence_radius(
         let cam_global =
             GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
 
-        let Some(bounds) = ScreenSpaceBounds::from_corners(
-            corners,
+        let Some(bounds) = ScreenSpaceBounds::from_points(
+            points,
             &cam_global,
             perspective,
             aspect_ratio,
             zoom_multiplier,
         ) else {
             info!(
-                "Iteration {iteration}: Corners behind camera at radius {test_radius:.1}, searching higher"
+                "Iteration {iteration}: Points behind camera at radius {test_radius:.1}, searching higher"
             );
             min_radius = test_radius;
             continue;
@@ -433,7 +493,7 @@ fn calculate_convergence_radius(
 
 /// Shifts the camera focus so the projected bounding box is centered on screen.
 ///
-/// Each correction step uses the harmonic mean of the depths of the two extreme corners
+/// Each correction step uses the harmonic mean of the depths of the two extreme points
 /// per dimension. This is the exact inverse of perspective projection: when the camera
 /// shifts laterally by `delta`, a point at depth `d` shifts by `-delta/d` in normalized
 /// screen space, so the screen-space center of two points at depths `d1` and `d2` shifts
@@ -441,7 +501,7 @@ fn calculate_convergence_radius(
 /// exactly. Convergence typically takes 1-2 iterations.
 #[allow(clippy::too_many_arguments)]
 fn refine_focus_centering(
-    corners: &[Vec3; 8],
+    points: &[Vec3],
     initial_focus: Vec3,
     radius: f32,
     rot: Quat,
@@ -460,7 +520,7 @@ fn refine_focus_centering(
         let cam_global =
             GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
         let Some(bounds) =
-            ScreenSpaceBounds::from_corners(corners, &cam_global, perspective, aspect_ratio, 1.0)
+            ScreenSpaceBounds::from_points(points, &cam_global, perspective, aspect_ratio, 1.0)
         else {
             break;
         };
@@ -476,14 +536,15 @@ fn refine_focus_centering(
 /// Observer for `ZoomToFit` event - frames a target entity in the camera view.
 /// When `duration_ms > 0.0`, animates smoothly over that duration.
 /// When `duration_ms <= 0.0`, snaps instantly.
-/// Requires target entity to have an `Aabb` (direct or on descendants).
+/// Requires target entity to have a `Mesh3d` (direct or on descendants).
 pub fn on_zoom_to_fit(
     zoom: On<ZoomToFit>,
     mut commands: Commands,
     mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera)>,
-    aabb_query: Query<&Aabb>,
+    mesh_query: Query<&Mesh3d>,
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
+    meshes: Res<Assets<Mesh>>,
 ) {
     let camera_entity = zoom.camera_entity;
     let target_entity = zoom.target;
@@ -515,9 +576,10 @@ pub fn on_zoom_to_fit(
         margin,
         projection,
         cam,
-        &aabb_query,
+        &mesh_query,
         &children_query,
         &global_transform_query,
+        &meshes,
     ) else {
         warn!("ZoomToFit: Failed to calculate target radius for entity {target_entity:?}");
         return;
@@ -566,50 +628,6 @@ pub fn on_zoom_to_fit(
         .insert(CurrentFitTarget(target_entity));
 }
 
-/// Recursively searches for an `Aabb` component on an entity or its descendants
-pub fn find_descendant_aabb<'a>(
-    entity: Entity,
-    children_query: &Query<&Children>,
-    aabb_query: &'a Query<&Aabb>,
-) -> Option<(Entity, &'a Aabb)> {
-    // Check if this entity has an Aabb
-    if let Ok(aabb) = aabb_query.get(entity) {
-        return Some((entity, aabb));
-    }
-
-    // Recursively check children
-    if let Ok(children) = children_query.get(entity) {
-        for child in children.iter() {
-            if let Some(result) = find_descendant_aabb(child, children_query, aabb_query) {
-                return Some(result);
-            }
-        }
-    }
-
-    None
-}
-
-/// Converts an `Aabb` to 8 corners in world space
-pub fn aabb_to_world_corners(aabb: &Aabb, global_transform: &GlobalTransform) -> [Vec3; 8] {
-    let center = Vec3::from(aabb.center);
-    let half_extents = Vec3::from(aabb.half_extents);
-
-    // Create 8 corners of the box
-    let corners = [
-        center + Vec3::new(-half_extents.x, -half_extents.y, -half_extents.z),
-        center + Vec3::new(half_extents.x, -half_extents.y, -half_extents.z),
-        center + Vec3::new(-half_extents.x, half_extents.y, -half_extents.z),
-        center + Vec3::new(half_extents.x, half_extents.y, -half_extents.z),
-        center + Vec3::new(-half_extents.x, -half_extents.y, half_extents.z),
-        center + Vec3::new(half_extents.x, -half_extents.y, half_extents.z),
-        center + Vec3::new(-half_extents.x, half_extents.y, half_extents.z),
-        center + Vec3::new(half_extents.x, half_extents.y, half_extents.z),
-    ];
-
-    // Transform to world space
-    corners.map(|corner| global_transform.transform_point(corner))
-}
-
 /// Observer for PlayAnimation event - initiates camera animation sequence
 pub fn on_play_animation(
     start: On<PlayAnimation>,
@@ -653,9 +671,10 @@ pub fn on_animate_to_fit(
     event: On<AnimateToFit>,
     mut commands: Commands,
     camera_query: Query<(&PanOrbitCamera, &Projection, &Camera)>,
-    aabb_query: Query<&Aabb>,
+    mesh_query: Query<&Mesh3d>,
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
+    meshes: Res<Assets<Mesh>>,
 ) {
     let camera_entity = event.camera_entity;
     let target_entity = event.target;
@@ -676,9 +695,10 @@ pub fn on_animate_to_fit(
         margin,
         projection,
         cam,
-        &aabb_query,
+        &mesh_query,
         &children_query,
         &global_transform_query,
+        &meshes,
     ) else {
         warn!("AnimateToFit: Failed to calculate fit for entity {target_entity:?}");
         return;

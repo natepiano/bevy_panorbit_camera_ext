@@ -1,25 +1,19 @@
 //! Visualization system for fit target debugging
 //!
-//! Provides screen-aligned boundary box visualization for the current camera fit target.
-//! Uses Bevy's GizmoConfigGroup pattern (similar to Avian3D's PhysicsGizmos).
+//! Provides screen-aligned boundary box and silhouette polygon visualization for the current
+//! camera fit target. Uses Bevy's GizmoConfigGroup pattern (similar to Avian3D's PhysicsGizmos).
 
-use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::extension::CurrentFitTarget;
-use crate::extension::aabb_to_world_corners;
-use crate::extension::find_descendant_aabb;
+use crate::extension::extract_mesh_vertices;
 
 /// Gizmo config group for fit target visualization (screen-aligned overlay).
 /// Toggle via `GizmoConfigStore::config_mut::<FitTargetGizmo>().enabled`
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct FitTargetGizmo {}
-
-/// Gizmo config group for the 3D AABB cuboid (depth-tested, occluded by geometry).
-#[derive(Default, Reflect, GizmoConfigGroup)]
-struct AabbGizmo {}
 
 /// Current screen-space margin percentages for the fit target.
 /// Updated every frame by the visualization system.
@@ -40,7 +34,7 @@ struct MarginLabel {
     edge: Edge,
 }
 
-/// Component marking the "screen aligned bounding box" label
+/// Component marking the "screen space bounds" label
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 struct BoundsLabel;
@@ -49,16 +43,12 @@ struct BoundsLabel;
 const LABEL_FONT_SIZE: f32 = 11.0;
 const LABEL_PIXEL_OFFSET: f32 = 8.0; // Fixed pixel offset from margin lines
 
-// Constants for 3D AABB label
-const AABB_LABEL_SCREEN_PX: f32 = 10.0; // Fixed screen-space font size in pixels
-const AABB_LABEL_GAP_PX: f32 = 8.0; // Fixed screen-space gap in pixels between edge and label
-
 /// Configuration for fit target visualization colors and appearance
 #[derive(Resource, Reflect, Debug, Clone)]
 #[reflect(Resource)]
 pub struct FitTargetVisualizationConfig {
     pub rectangle_color:  Color,
-    pub aabb_color:       Color,
+    pub silhouette_color: Color,
     pub balanced_color:   Color,
     pub unbalanced_color: Color,
     pub line_width:       f32,
@@ -68,7 +58,7 @@ impl Default for FitTargetVisualizationConfig {
     fn default() -> Self {
         Self {
             rectangle_color:  Color::srgb(1.0, 1.0, 0.0), // Yellow
-            aabb_color:       Color::srgb(1.0, 0.5, 0.0), // Orange
+            silhouette_color: Color::srgb(1.0, 0.5, 0.0), // Orange
             balanced_color:   Color::srgb(0.0, 1.0, 0.0), // Green
             unbalanced_color: Color::srgb(1.0, 0.0, 0.0), // Red
             line_width:       2.0,
@@ -82,7 +72,6 @@ pub struct FitTargetVisualizationPlugin;
 impl Plugin for FitTargetVisualizationPlugin {
     fn build(&self, app: &mut App) {
         app.init_gizmo_group::<FitTargetGizmo>()
-            .init_gizmo_group::<AabbGizmo>()
             .init_resource::<FitTargetVisualizationConfig>()
             .add_systems(Startup, init_fit_target_gizmo)
             .add_systems(
@@ -120,11 +109,6 @@ fn init_fit_target_gizmo(
     config.enabled = false;
     config.line.width = viz_config.line_width;
     config.depth_bias = -1.0;
-
-    // AABB gizmo: depth-tested so it's occluded by geometry
-    let (aabb_config, _) = config_store.config_mut::<AabbGizmo>();
-    aabb_config.enabled = false;
-    aabb_config.line.width = viz_config.line_width;
 }
 
 /// Syncs the gizmo render layers and line width with camera and visualization config
@@ -137,21 +121,11 @@ fn sync_gizmo_render_layers(
         return;
     };
 
-    let layers = render_layers.cloned();
-    let fit_enabled = config_store.config::<FitTargetGizmo>().0.enabled;
-
     let (gizmo_config, _) = config_store.config_mut::<FitTargetGizmo>();
-    if let Some(ref layers) = layers {
+    if let Some(layers) = render_layers {
         gizmo_config.render_layers = layers.clone();
     }
     gizmo_config.line.width = viz_config.line_width;
-
-    let (aabb_config, _) = config_store.config_mut::<AabbGizmo>();
-    if let Some(layers) = layers {
-        aabb_config.render_layers = layers;
-    }
-    aabb_config.enabled = fit_enabled;
-    aabb_config.line.width = viz_config.line_width;
 }
 
 /// Boundary box edges
@@ -181,7 +155,7 @@ struct ScreenSpaceBoundary {
     min_norm_y:    f32,
     /// Maximum normalized y coordinate in screen space
     max_norm_y:    f32,
-    /// Average depth of boundary corners from camera
+    /// Average depth of boundary points from camera
     avg_depth:     f32,
     /// Half tangent of vertical field of view
     half_tan_vfov: f32,
@@ -190,11 +164,11 @@ struct ScreenSpaceBoundary {
 }
 
 impl ScreenSpaceBoundary {
-    /// Creates screen space margins from a camera's view of target corners.
-    /// Returns `None` if any corner is behind the camera.
+    /// Creates screen space margins from a camera's view of target points.
+    /// Returns `None` if any point is behind the camera.
     #[allow(clippy::similar_names)] // half_tan_hfov vs half_tan_vfov are standard FOV terms
-    fn from_corners(
-        corners: &[Vec3; 8],
+    fn from_points(
+        points: &[Vec3],
         cam_global: &GlobalTransform,
         perspective: &PerspectiveProjection,
         viewport_aspect: f32,
@@ -209,18 +183,18 @@ impl ScreenSpaceBoundary {
         let cam_right = cam_rot * Vec3::X;
         let cam_up = cam_rot * Vec3::Y;
 
-        // Project corners to screen space
+        // Project points to screen space
         let mut min_norm_x = f32::INFINITY;
         let mut max_norm_x = f32::NEG_INFINITY;
         let mut min_norm_y = f32::INFINITY;
         let mut max_norm_y = f32::NEG_INFINITY;
         let mut avg_depth = 0.0;
 
-        for corner in corners {
-            let relative = *corner - cam_pos;
+        for point in points {
+            let relative = *point - cam_pos;
             let depth = relative.dot(cam_forward);
 
-            // Check if corner is behind camera
+            // Check if point is behind camera
             if depth <= 0.1 {
                 return None;
             }
@@ -237,7 +211,7 @@ impl ScreenSpaceBoundary {
             max_norm_y = max_norm_y.max(norm_y);
             avg_depth += depth;
         }
-        avg_depth /= 8.0;
+        avg_depth /= points.len() as f32;
 
         // Calculate margins as distance from bounds to screen edges
         let left_margin = min_norm_x - (-half_tan_hfov);
@@ -359,6 +333,122 @@ impl ScreenSpaceBoundary {
     }
 }
 
+// ============================================================================
+// Convex Hull
+// ============================================================================
+
+/// 2D cross product for three points (for convex hull turn detection)
+fn cross_2d(o: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+}
+
+/// Andrew's monotone chain algorithm for 2D convex hull.
+/// Returns hull vertices in counter-clockwise order.
+fn convex_hull_2d(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let mut sorted: Vec<(f32, f32)> = points.to_vec();
+    sorted.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap()
+            .then(a.1.partial_cmp(&b.1).unwrap())
+    });
+    sorted.dedup();
+
+    if sorted.len() <= 1 {
+        return sorted;
+    }
+
+    // Build lower hull
+    let mut lower: Vec<(f32, f32)> = Vec::new();
+    for &p in &sorted {
+        while lower.len() >= 2 && cross_2d(lower[lower.len() - 2], lower[lower.len() - 1], p) <= 0.0
+        {
+            lower.pop();
+        }
+        lower.push(p);
+    }
+
+    // Build upper hull
+    let mut upper: Vec<(f32, f32)> = Vec::new();
+    for &p in sorted.iter().rev() {
+        while upper.len() >= 2 && cross_2d(upper[upper.len() - 2], upper[upper.len() - 1], p) <= 0.0
+        {
+            upper.pop();
+        }
+        upper.push(p);
+    }
+
+    // Remove last point of each half (it's the first point of the other half)
+    lower.pop();
+    upper.pop();
+
+    lower.extend(upper);
+    lower
+}
+
+/// Projects world-space vertices to 2D normalized screen space
+fn project_vertices_to_2d(
+    vertices: &[Vec3],
+    cam_pos: Vec3,
+    cam_forward: Vec3,
+    cam_right: Vec3,
+    cam_up: Vec3,
+) -> Vec<(f32, f32)> {
+    vertices
+        .iter()
+        .filter_map(|v| {
+            let relative = *v - cam_pos;
+            let depth = relative.dot(cam_forward);
+            if depth <= 0.1 {
+                return None;
+            }
+            let norm_x = relative.dot(cam_right) / depth;
+            let norm_y = relative.dot(cam_up) / depth;
+            Some((norm_x, norm_y))
+        })
+        .collect()
+}
+
+/// Draws the silhouette polygon (convex hull of projected vertices) using gizmo lines.
+fn draw_silhouette_polygon(
+    gizmos: &mut Gizmos<FitTargetGizmo>,
+    hull_points: &[(f32, f32)],
+    boundary: &ScreenSpaceBoundary,
+    cam_pos: Vec3,
+    cam_right: Vec3,
+    cam_up: Vec3,
+    cam_forward: Vec3,
+    color: Color,
+) {
+    if hull_points.len() < 2 {
+        return;
+    }
+
+    for i in 0..hull_points.len() {
+        let next = (i + 1) % hull_points.len();
+        let start = boundary.normalized_to_world(
+            hull_points[i].0,
+            hull_points[i].1,
+            cam_pos,
+            cam_right,
+            cam_up,
+            cam_forward,
+        );
+        let end = boundary.normalized_to_world(
+            hull_points[next].0,
+            hull_points[next].1,
+            cam_pos,
+            cam_right,
+            cam_up,
+            cam_forward,
+        );
+        gizmos.line(start, end, color);
+    }
+}
+
+// ============================================================================
+// Drawing helpers
+// ============================================================================
+
 /// Calculates the color for an edge based on balance state
 const fn calculate_edge_color(
     edge: Edge,
@@ -438,217 +528,6 @@ fn draw_rectangle(
         let next = (i + 1) % 4;
         gizmos.line(corners[i], corners[next], config.rectangle_color);
     }
-}
-
-/// Draws the 3D AABB as a wireframe cuboid (12 edges connecting 8 corners).
-/// Uses `AabbGizmo` group so lines are depth-tested and occluded by geometry.
-fn draw_aabb_cuboid(
-    gizmos: &mut Gizmos<AabbGizmo>,
-    corners: &[Vec3; 8],
-    config: &FitTargetVisualizationConfig,
-) {
-    // Corner indices form a box:
-    //   0(-x,-y,-z) 1(+x,-y,-z) 2(-x,+y,-z) 3(+x,+y,-z)
-    //   4(-x,-y,+z) 5(+x,-y,+z) 6(-x,+y,+z) 7(+x,+y,+z)
-    const EDGES: [(usize, usize); 12] = [
-        // Bottom face
-        (0, 1),
-        (1, 3),
-        (3, 2),
-        (2, 0),
-        // Top face
-        (4, 5),
-        (5, 7),
-        (7, 6),
-        (6, 4),
-        // Vertical edges
-        (0, 4),
-        (1, 5),
-        (2, 6),
-        (3, 7),
-    ];
-
-    for (a, b) in EDGES {
-        gizmos.line(corners[a], corners[b], config.aabb_color);
-    }
-}
-
-/// Draws "AABB" as 3D stroke text using gizmo line segments.
-/// `center` is the midpoint of the text. `right` and `up` are unit directions
-/// defining the text plane. `font_size` scales the cap height (1.0 in glyph space).
-fn draw_stroke_aabb(
-    gizmos: &mut Gizmos<AabbGizmo>,
-    center: Vec3,
-    right: Vec3,
-    up: Vec3,
-    font_size: f32,
-    color: Color,
-) {
-    // "AABB" layout: A(0.0), A(0.78), B(1.56), B(2.29)
-    // Glyph A width=0.5, B width=0.45, inter-letter gap=0.28
-    const TOTAL_ADVANCE: f32 = 2.74;
-    let r = right * font_size;
-    let u = up * font_size;
-    let origin = center - r * (TOTAL_ADVANCE * 0.5);
-
-    let w = |x: f32, y: f32| -> Vec3 { origin + r * x + u * y };
-
-    // Glyph A: two diagonals + crossbar
-    for x_off in [0.0, 0.78] {
-        gizmos.line(w(x_off, 0.0), w(x_off + 0.25, 1.0), color);
-        gizmos.line(w(x_off + 0.25, 1.0), w(x_off + 0.5, 0.0), color);
-        gizmos.line(w(x_off + 0.1, 0.35), w(x_off + 0.4, 0.35), color);
-    }
-
-    // Glyph B: single polyline path through all stroke points
-    for x_off in [1.56, 2.29] {
-        let pts: [(f32, f32); 12] = [
-            (0.0, 0.0),
-            (0.0, 1.0),
-            (0.35, 1.0),
-            (0.45, 0.85),
-            (0.45, 0.6),
-            (0.3, 0.5),
-            (0.0, 0.5),
-            (0.3, 0.5),
-            (0.45, 0.4),
-            (0.45, 0.15),
-            (0.35, 0.0),
-            (0.0, 0.0),
-        ];
-        for pair in pts.windows(2) {
-            gizmos.line(
-                w(x_off + pair[0].0, pair[0].1),
-                w(x_off + pair[1].0, pair[1].1),
-                color,
-            );
-        }
-    }
-}
-
-/// Draws a rotated "AABB" stroke-font label on the most camera-facing face of the cuboid,
-/// just below the top edge of that face. Oriented flat on the face surface.
-fn draw_aabb_label(
-    gizmos: &mut Gizmos<AabbGizmo>,
-    corners: &[Vec3; 8],
-    cam_pos: Vec3,
-    cam_rot: Quat,
-    half_tan_vfov: f32,
-    viewport_height: f32,
-    config: &FitTargetVisualizationConfig,
-) {
-    let cam_up = cam_rot * Vec3::Y;
-    let cam_right = cam_rot * Vec3::X;
-
-    // The 6 faces of the AABB, each defined by 4 corner indices.
-    // Corner layout: 0(-x,-y,-z) 1(+x,-y,-z) 2(-x,+y,-z) 3(+x,+y,-z)
-    //                4(-x,-y,+z) 5(+x,-y,+z) 6(-x,+y,+z) 7(+x,+y,+z)
-    let faces: [[usize; 4]; 6] = [
-        [2, 3, 7, 6], // +Y (top)
-        [0, 1, 5, 4], // -Y (bottom)
-        [4, 5, 7, 6], // +Z (front)
-        [0, 1, 3, 2], // -Z (back)
-        [1, 5, 7, 3], // +X (right)
-        [0, 4, 6, 2], // -X (left)
-    ];
-
-    // Find the face whose world-space normal most faces the camera.
-    // Normals are computed from world-space corners via cross product, which yields
-    // area-weighted normals that correctly handle rotation and non-uniform scale.
-    let aabb_center = corners.iter().copied().sum::<Vec3>() / 8.0;
-    let to_cam = (cam_pos - aabb_center).normalize();
-
-    let mut best_face_idx = 0;
-    let mut best_dot = f32::NEG_INFINITY;
-    let mut best_normal = Vec3::ZERO;
-
-    for (i, face) in faces.iter().enumerate() {
-        let edge1 = corners[face[1]] - corners[face[0]];
-        let edge2 = corners[face[3]] - corners[face[0]];
-        let mut normal = edge1.cross(edge2);
-
-        // Ensure outward-pointing: normal should point away from AABB center
-        let face_center =
-            (corners[face[0]] + corners[face[1]] + corners[face[2]] + corners[face[3]]) * 0.25;
-        if normal.dot(face_center - aabb_center) < 0.0 {
-            normal = -normal;
-        }
-
-        let dot = normal.dot(to_cam);
-        if dot > best_dot {
-            best_dot = dot;
-            best_face_idx = i;
-            best_normal = normal;
-        }
-    }
-
-    let face_corners = faces[best_face_idx];
-    let face_normal = best_normal.normalize();
-
-    // Find the "top" edge of this face: the edge whose midpoint is highest on screen
-    // (most positive dot with camera up). Each face has 4 edges.
-    let face_edges: [(usize, usize); 4] = [
-        (face_corners[0], face_corners[1]),
-        (face_corners[1], face_corners[2]),
-        (face_corners[2], face_corners[3]),
-        (face_corners[3], face_corners[0]),
-    ];
-
-    let mut top_edge_idx = 0;
-    let mut highest_screen_y = f32::NEG_INFINITY;
-    for (i, &(a, b)) in face_edges.iter().enumerate() {
-        let mid = (corners[a] + corners[b]) * 0.5;
-        let screen_y = mid.dot(cam_up);
-        if screen_y > highest_screen_y {
-            highest_screen_y = screen_y;
-            top_edge_idx = i;
-        }
-    }
-
-    let (a, b) = face_edges[top_edge_idx];
-    let start = corners[a];
-    let end = corners[b];
-
-    // Edge direction, flipped so text reads left-to-right
-    let mut edge_dir = (end - start).normalize();
-    if edge_dir.dot(cam_right) < 0.0 {
-        edge_dir = -edge_dir;
-    }
-
-    let midpoint = (start + end) * 0.5;
-
-    // "Into face" direction from the top edge: perpendicular to edge and face normal,
-    // pointing toward the AABB center (into the face interior = downward on the face).
-    let into_face = face_normal.cross(edge_dir).normalize();
-    let to_center = (aabb_center - midpoint).normalize();
-    let into_face = if into_face.dot(to_center) < 0.0 {
-        -into_face
-    } else {
-        into_face
-    };
-
-    // Text "up" points away from the face interior (upward on the face)
-    let text_up = -into_face;
-
-    // Convert fixed screen-space pixel sizes to world-space at the label's depth.
-    // world_size = (screen_px / viewport_height) * 2 * half_tan_vfov * depth
-    let cam_forward = cam_rot * Vec3::NEG_Z;
-    let depth = (midpoint - cam_pos).dot(cam_forward).max(0.1);
-    let px_to_world = (2.0 * half_tan_vfov * depth) / viewport_height;
-    let font_size = AABB_LABEL_SCREEN_PX * px_to_world;
-    let gap = AABB_LABEL_GAP_PX * px_to_world;
-
-    // Offset into the face so text sits just below the top edge, slightly outward
-    let label_center = midpoint + into_face * (font_size + gap) + face_normal * gap;
-
-    draw_stroke_aabb(
-        gizmos,
-        label_center,
-        edge_dir,
-        text_up,
-        font_size,
-        config.aabb_color,
-    );
 }
 
 /// Converts a normalized screen-space coordinate to viewport pixels.
@@ -785,7 +664,7 @@ fn update_or_create_bounds_label(
         node.top = Val::Px(screen_pos.y);
     } else {
         commands.spawn((
-            Text::new("screen space AABB"),
+            Text::new("screen space bounds"),
             TextFont {
                 font_size: LABEL_FONT_SIZE,
                 ..default()
@@ -809,12 +688,15 @@ fn cleanup_margin_labels(mut commands: Commands, label_query: Query<Entity, With
     }
 }
 
+// ============================================================================
+// Main visualization system
+// ============================================================================
+
 /// Draws screen-aligned bounds for the current fit target
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn draw_fit_target_bounds(
     mut commands: Commands,
     mut gizmos: Gizmos<FitTargetGizmo>,
-    mut aabb_gizmos: Gizmos<AabbGizmo>,
     config: Res<FitTargetVisualizationConfig>,
     config_store: Res<GizmoConfigStore>,
     camera_query: Query<
@@ -827,9 +709,10 @@ fn draw_fit_target_bounds(
         ),
         With<PanOrbitCamera>,
     >,
-    aabb_query: Query<&Aabb>,
+    mesh_query: Query<&Mesh3d>,
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
+    meshes: Res<Assets<Mesh>>,
     mut label_query: Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
     mut bounds_label_query: Query<(Entity, &mut Node), (With<BoundsLabel>, Without<MarginLabel>)>,
 ) {
@@ -846,42 +729,23 @@ fn draw_fit_target_bounds(
         return;
     };
 
-    // Find target's Aabb (same logic as zoom observers)
-    let Some((aabb_entity, aabb)) =
-        find_descendant_aabb(current_target.0, &children_query, &aabb_query)
-    else {
-        return; // No Aabb found
+    // Extract mesh vertices (same logic as zoom observers)
+    let Some((vertices, _)) = extract_mesh_vertices(
+        current_target.0,
+        &children_query,
+        &mesh_query,
+        &global_transform_query,
+        &meshes,
+    ) else {
+        return; // No mesh found
     };
 
-    let Ok(target_transform) = global_transform_query.get(aabb_entity) else {
-        return;
-    };
-
-    // Convert Aabb to world corners
-    let corners = aabb_to_world_corners(aabb, target_transform);
-
-    // Get camera basis vectors (needed for both AABB label and screen-space drawing)
+    // Get camera basis vectors
     let cam_pos = cam_global.translation();
     let cam_rot = cam_global.rotation();
     let cam_forward = cam_rot * Vec3::NEG_Z;
     let cam_right = cam_rot * Vec3::X;
     let cam_up = cam_rot * Vec3::Y;
-
-    // Draw the 3D AABB cuboid and label when visualization is enabled
-    if visualization_enabled {
-        draw_aabb_cuboid(&mut aabb_gizmos, &corners, &config);
-        let half_tan_vfov = (perspective.fov * 0.5).tan();
-        let viewport_height = cam.logical_viewport_size().map_or(720.0, |s| s.y);
-        draw_aabb_label(
-            &mut aabb_gizmos,
-            &corners,
-            cam_pos,
-            cam_rot,
-            half_tan_vfov,
-            viewport_height,
-            &config,
-        );
-    }
 
     // Get actual viewport aspect ratio
     let aspect_ratio = if let Some(viewport_size) = cam.logical_viewport_size() {
@@ -890,9 +754,9 @@ fn draw_fit_target_bounds(
         perspective.aspect_ratio
     };
 
-    // Calculate screen-space bounds
+    // Calculate screen-space bounds from mesh vertices
     let Some(margins) =
-        ScreenSpaceBoundary::from_corners(&corners, cam_global, perspective, aspect_ratio)
+        ScreenSpaceBoundary::from_points(&vertices, cam_global, perspective, aspect_ratio)
     else {
         return; // Target behind camera
     };
@@ -905,12 +769,28 @@ fn draw_fit_target_bounds(
         bottom_pct: margins.margin_percentage(Edge::Bottom),
     });
 
-    // Draw the screen-aligned rectangle
+    // Draw the screen-aligned bounding rectangle
     let rect_corners_world =
         create_screen_corners(&margins, cam_pos, cam_right, cam_up, cam_forward);
     draw_rectangle(&mut gizmos, &rect_corners_world, &config);
 
-    // Place "screen aligned bounding box" label inside the upper-left of the rectangle
+    // Draw silhouette polygon (convex hull) when visualization is enabled
+    if visualization_enabled {
+        let projected = project_vertices_to_2d(&vertices, cam_pos, cam_forward, cam_right, cam_up);
+        let hull = convex_hull_2d(&projected);
+        draw_silhouette_polygon(
+            &mut gizmos,
+            &hull,
+            &margins,
+            cam_pos,
+            cam_right,
+            cam_up,
+            cam_forward,
+            config.silhouette_color,
+        );
+    }
+
+    // Place "screen space bounds" label inside the upper-left of the rectangle
     if visualization_enabled && let Some(viewport_size) = cam.logical_viewport_size() {
         let upper_left = norm_to_viewport(
             margins.min_norm_x,

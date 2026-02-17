@@ -9,7 +9,6 @@
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 
-use bevy::camera::primitives::Aabb;
 use bevy::color::palettes::basic::SILVER;
 use bevy::color::palettes::css::DEEP_SKY_BLUE;
 use bevy::math::curve::easing::EaseFunction;
@@ -106,7 +105,7 @@ struct EventLine {
 struct ActiveEasing(EaseFunction);
 
 impl Default for ActiveEasing {
-    fn default() -> Self { Self(EaseFunction::QuadraticInOut) }
+    fn default() -> Self { Self(EaseFunction::BackOut) }
 }
 
 const ALL_EASINGS: &[EaseFunction] = &[
@@ -216,7 +215,7 @@ fn setup(
     let sphere_radius = 0.5;
     commands
         .spawn((
-            Mesh3d(meshes.add(Sphere::new(sphere_radius))),
+            Mesh3d(meshes.add(Sphere::new(sphere_radius).mesh().uv(128, 64))),
             MeshMaterial3d(materials.add(Color::srgb(0.9, 0.3, 0.2))),
             Transform::from_xyz(0.0, MESH_CENTER_Y, 0.0),
             MeshShape::Sphere(sphere_radius),
@@ -229,7 +228,14 @@ fn setup(
     let torus_major = 0.75;
     commands
         .spawn((
-            Mesh3d(meshes.add(Torus::new(torus_minor, torus_major))),
+            Mesh3d(
+                meshes.add(
+                    Torus::new(torus_minor, torus_major)
+                        .mesh()
+                        .minor_resolution(64)
+                        .major_resolution(64),
+                ),
+            ),
             MeshMaterial3d(materials.add(Color::srgb(0.3, 0.8, 0.4))),
             Transform::from_xyz(2.5, MESH_CENTER_Y, 0.0),
             MeshShape::Torus {
@@ -243,7 +249,7 @@ fn setup(
     // Invisible scene bounds sphere (zoom-out target)
     let scene_bounds = commands
         .spawn((
-            Mesh3d(meshes.add(Sphere::new(3.5))),
+            Mesh3d(meshes.add(Sphere::new(3.5).mesh().uv(128, 64))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgba(0.0, 0.0, 0.0, 0.0),
                 alpha_mode: AlphaMode::Blend,
@@ -274,7 +280,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Press:\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize animate camera easing\n'Q' reset to QuadraticInOut"),
+        Text::new("Press:\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'B' reset to 'BackOut' easing"),
         TextFont {
             font_size: 13.0,
             ..default()
@@ -313,10 +319,14 @@ fn setup(
 fn initial_fit_to_scene(
     mut commands: Commands,
     scene: Res<SceneEntities>,
-    aabb_query: Query<&Aabb>,
+    mesh_query: Query<&Mesh3d>,
+    meshes: Res<Assets<Mesh>>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    if aabb_query.get(scene.scene_bounds).is_err() {
+    let Ok(mesh3d) = mesh_query.get(scene.scene_bounds) else {
+        return;
+    };
+    if meshes.get(&mesh3d.0).is_none() {
         return;
     }
     commands.trigger(ZoomToFit::new(
@@ -485,9 +495,9 @@ fn randomize_easing(
         easing.0 = ALL_EASINGS[index];
         log.push(format!("Easing: {:#?}", easing.0), &time);
     }
-    if keyboard.just_pressed(KeyCode::KeyQ) {
-        easing.0 = EaseFunction::QuadraticInOut;
-        log.push("Easing: reset to QuadraticInOut".into(), &time);
+    if keyboard.just_pressed(KeyCode::KeyB) {
+        easing.0 = EaseFunction::BackOut;
+        log.push("Easing: reset to Backout".into(), &time);
     }
 }
 

@@ -55,11 +55,11 @@ pub struct ScreenSpaceBounds {
 }
 
 impl ScreenSpaceBounds {
-    /// Creates screen space bounds from a camera's view of a set of corners.
-    /// Returns `None` if any corner is behind the camera.
+    /// Creates screen space bounds from a camera's view of a set of points.
+    /// Returns `None` if any point is behind the camera.
     #[allow(clippy::too_many_arguments)]
-    pub fn from_corners(
-        corners: &[Vec3; 8],
+    pub fn from_points(
+        points: &[Vec3],
         cam_global: &GlobalTransform,
         perspective: &PerspectiveProjection,
         viewport_aspect: f32,
@@ -98,11 +98,11 @@ impl ScreenSpaceBounds {
         let mut min_y_depth = 0.0_f32;
         let mut max_y_depth = 0.0_f32;
 
-        for (i, corner) in corners.iter().enumerate() {
-            let relative = *corner - cam_pos;
+        for (i, point) in points.iter().enumerate() {
+            let relative = *point - cam_pos;
             let depth = relative.dot(cam_forward);
 
-            // Check if corner is behind camera
+            // Check if point is behind camera
             if depth <= 0.1 {
                 return None;
             }
@@ -113,14 +113,14 @@ impl ScreenSpaceBounds {
             let norm_x = x / depth;
             let norm_y = y / depth;
 
-            // Log ALL corners for the first call only
+            // Log first 8 points for debugging
             if i == 0 {
-                info!("=== ALL 8 CORNERS PROJECTION ===");
+                info!("=== POINT PROJECTION ({} points) ===", points.len());
             }
             if i < 8 {
                 info!(
-                    "Corner[{}]: world=({:.0},{:.0},{:.0}) → screen_x={:.1} screen_y={:.1} depth={:.1} → norm=({:.3},{:.3})",
-                    i, corner.x, corner.y, corner.z, x, y, depth, norm_x, norm_y
+                    "Point[{i}]: world=({:.0},{:.0},{:.0}) → screen_x={x:.1} screen_y={y:.1} depth={depth:.1} → norm=({norm_x:.3},{norm_y:.3})",
+                    point.x, point.y, point.z
                 );
             }
 
