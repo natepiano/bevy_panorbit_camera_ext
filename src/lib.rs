@@ -16,15 +16,19 @@ mod zoom;
 // Public API - Completion events
 // Public API - Animation types
 // Internal - used by plugin, not for external use
+use animation::process_camera_move_list;
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
-use animation::process_camera_move_list;
 pub use events::AnimationBegin;
 pub use events::AnimationEnd;
 pub use events::CameraMoveBegin;
 pub use events::CameraMoveEnd;
 pub use events::ZoomBegin;
 pub use events::ZoomEnd;
+use extension::on_animate_to_fit;
+use extension::on_play_animation;
+use extension::on_set_fit_target;
+use extension::on_zoom_to_fit;
 pub use extension::AnimateToFit;
 // Public API - Traits
 pub use extension::PanOrbitCameraExt;
@@ -32,12 +36,8 @@ pub use extension::PlayAnimation;
 pub use extension::SetFitTarget;
 pub use extension::ZoomAnimationMarker;
 pub use extension::ZoomToFit;
-use extension::on_animate_to_fit;
-use extension::on_play_animation;
-use extension::on_set_fit_target;
-use extension::on_zoom_to_fit;
-pub use smoothness::SmoothnessStash;
 use smoothness::restore_smoothness_on_move_end;
+pub use smoothness::SmoothnessStash;
 // Public API - Gizmo groups (for enabling/disabling)
 pub use visualization::FitTargetGizmo;
 pub use visualization::FitTargetMargins;
@@ -50,9 +50,9 @@ pub use zoom::Edge;
 pub use zoom::ScreenSpaceBounds;
 
 /// Plugin that adds all camera extension functionality
-pub struct CameraExtPlugin;
+pub struct PanOrbitCameraExtPlugin;
 
-impl Plugin for CameraExtPlugin {
+impl Plugin for PanOrbitCameraExtPlugin {
     fn build(&self, app: &mut App) {
         app
             // Register observers for component lifecycle events

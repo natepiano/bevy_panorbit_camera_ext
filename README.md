@@ -8,24 +8,26 @@ Extension library for [`bevy_panorbit_camera`](https://github.com/Plonq/bevy_pan
 - Zoom-to-fit with animated or instant positioning
 - Zoom target debug visualization
 
-## Installation
+## Quick Start
 
-```toml
-[dependencies]
-bevy = "0.18.0"
-bevy_panorbit_camera = "0.34.0"
-bevy_panorbit_camera_ext = "0.1.0"
-```
-
-## Usage
+Add the plugin to your app alongside `PanOrbitCameraPlugin`:
 
 ```rust
 use bevy::prelude::*;
-use bevy_panorbit_camera_ext::prelude::*;
+use bevy_panorbit_camera::PanOrbitCameraPlugin;
+use bevy_panorbit_camera_ext::PanorbitCameraExtPlugin;
 
 App::new()
-    .add_plugins(CameraExtPlugin)
+    .add_plugins(DefaultPlugins)
+    .add_plugins(PanOrbitCameraPlugin)
+    .add_plugins(PanOrbitCameraExtPlugin)
     .run();
+```
+
+Check out the [demo example](examples/demo.rs) to see everything in action, or run it with:
+
+```sh
+cargo run --example demo
 ```
 
 ## Events

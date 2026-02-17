@@ -21,12 +21,12 @@ use bevy_panorbit_camera::TrackpadBehavior;
 use bevy_panorbit_camera_ext::AnimateToFit;
 use bevy_panorbit_camera_ext::AnimationBegin;
 use bevy_panorbit_camera_ext::AnimationEnd;
-use bevy_panorbit_camera_ext::CameraExtPlugin;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
 use bevy_panorbit_camera_ext::FitTargetGizmo;
 use bevy_panorbit_camera_ext::FitTargetVisualizationPlugin;
+use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::ZoomBegin;
 use bevy_panorbit_camera_ext::ZoomEnd;
@@ -58,7 +58,7 @@ fn main() {
         .add_plugins((
             DefaultPlugins,
             PanOrbitCameraPlugin,
-            CameraExtPlugin,
+            PanOrbitCameraExtPlugin,
             FitTargetVisualizationPlugin,
             MeshPickingPlugin,
             BrpExtrasPlugin::default(),
