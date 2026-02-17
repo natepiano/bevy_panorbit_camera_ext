@@ -433,12 +433,12 @@ fn calculate_convergence_radius(
 
 /// Shifts the camera focus so the projected bounding box is centered on screen.
 ///
-/// A single correction step uses `avg_depth` as the depth estimate, but corners sit at
-/// varying depths (near vs far side of the box). Each iteration reduces the centering
-/// error by roughly 70-80% (the residual is proportional to depth variance across
-/// corners). With `CENTERING_MAX_ITERATIONS` = 10 the residual is ~0.3^10 ≈ 0.000006,
-/// well past the `CENTERING_TOLERANCE` of 0.0001. In practice convergence takes 3-5
-/// iterations.
+/// Each correction step uses the harmonic mean of the depths of the two extreme corners
+/// per dimension. This is the exact inverse of perspective projection: when the camera
+/// shifts laterally by `delta`, a point at depth `d` shifts by `-delta/d` in normalized
+/// screen space, so the screen-space center of two points at depths `d1` and `d2` shifts
+/// by `-delta * (1/d1 + 1/d2) / 2`. The harmonic mean `2*d1*d2/(d1+d2)` inverts this
+/// exactly. Convergence typically takes 1-2 iterations.
 #[allow(clippy::too_many_arguments)]
 fn refine_focus_centering(
     corners: &[Vec3; 8],
@@ -468,7 +468,7 @@ fn refine_focus_centering(
         if cx.abs() < CENTERING_TOLERANCE && cy.abs() < CENTERING_TOLERANCE {
             break;
         }
-        focus += cam_right * cx * bounds.avg_depth + cam_up * cy * bounds.avg_depth;
+        focus += cam_right * cx * bounds.centering_depth_x + cam_up * cy * bounds.centering_depth_y;
     }
     focus
 }

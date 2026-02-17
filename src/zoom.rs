@@ -25,31 +25,33 @@ pub enum Edge {
 #[derive(Debug, Clone)]
 pub struct ScreenSpaceBounds {
     /// Distance from left edge (positive = inside, negative = outside)
-    pub left_margin:     f32,
+    pub left_margin:       f32,
     /// Distance from right edge (positive = inside, negative = outside)
-    pub right_margin:    f32,
+    pub right_margin:      f32,
     /// Distance from top edge (positive = inside, negative = outside)
-    pub top_margin:      f32,
+    pub top_margin:        f32,
     /// Distance from bottom edge (positive = inside, negative = outside)
-    pub bottom_margin:   f32,
+    pub bottom_margin:     f32,
     /// Target margin for horizontal (in screen-space units)
-    pub target_margin_x: f32,
+    pub target_margin_x:   f32,
     /// Target margin for vertical (in screen-space units)
-    pub target_margin_y: f32,
+    pub target_margin_y:   f32,
     /// Minimum normalized x coordinate in screen space
-    pub min_norm_x:      f32,
+    pub min_norm_x:        f32,
     /// Maximum normalized x coordinate in screen space
-    pub max_norm_x:      f32,
+    pub max_norm_x:        f32,
     /// Minimum normalized y coordinate in screen space
-    pub min_norm_y:      f32,
+    pub min_norm_y:        f32,
     /// Maximum normalized y coordinate in screen space
-    pub max_norm_y:      f32,
-    /// Average depth of boundary corners from camera
-    pub avg_depth:       f32,
+    pub max_norm_y:        f32,
+    /// Harmonic mean depth of the two corners defining horizontal extremes
+    pub centering_depth_x: f32,
+    /// Harmonic mean depth of the two corners defining vertical extremes
+    pub centering_depth_y: f32,
     /// Half tangent of vertical field of view
-    pub half_tan_vfov:   f32,
+    pub half_tan_vfov:     f32,
     /// Half tangent of horizontal field of view (vfov * aspect_ratio)
-    pub half_tan_hfov:   f32,
+    pub half_tan_hfov:     f32,
 }
 
 impl ScreenSpaceBounds {
@@ -91,7 +93,10 @@ impl ScreenSpaceBounds {
         let mut max_norm_x = f32::NEG_INFINITY;
         let mut min_norm_y = f32::INFINITY;
         let mut max_norm_y = f32::NEG_INFINITY;
-        let mut avg_depth = 0.0;
+        let mut min_x_depth = 0.0_f32;
+        let mut max_x_depth = 0.0_f32;
+        let mut min_y_depth = 0.0_f32;
+        let mut max_y_depth = 0.0_f32;
 
         for (i, corner) in corners.iter().enumerate() {
             let relative = *corner - cam_pos;
@@ -119,13 +124,28 @@ impl ScreenSpaceBounds {
                 );
             }
 
-            min_norm_x = min_norm_x.min(norm_x);
-            max_norm_x = max_norm_x.max(norm_x);
-            min_norm_y = min_norm_y.min(norm_y);
-            max_norm_y = max_norm_y.max(norm_y);
-            avg_depth += depth;
+            if norm_x < min_norm_x {
+                min_norm_x = norm_x;
+                min_x_depth = depth;
+            }
+            if norm_x > max_norm_x {
+                max_norm_x = norm_x;
+                max_x_depth = depth;
+            }
+            if norm_y < min_norm_y {
+                min_norm_y = norm_y;
+                min_y_depth = depth;
+            }
+            if norm_y > max_norm_y {
+                max_norm_y = norm_y;
+                max_y_depth = depth;
+            }
         }
-        avg_depth /= 8.0;
+
+        // Harmonic mean of the two extreme corner depths per dimension.
+        // This is the exact depth for perspective-correct centering corrections.
+        let centering_depth_x = 2.0 * min_x_depth * max_x_depth / (min_x_depth + max_x_depth);
+        let centering_depth_y = 2.0 * min_y_depth * max_y_depth / (min_y_depth + max_y_depth);
 
         // Determine which dimension SHOULD constrain based on aspect ratios
         let boundary_aspect = (max_norm_x - min_norm_x) / (max_norm_y - min_norm_y);
@@ -208,7 +228,8 @@ impl ScreenSpaceBounds {
             max_norm_x,
             min_norm_y,
             max_norm_y,
-            avg_depth,
+            centering_depth_x,
+            centering_depth_y,
             half_tan_vfov,
             half_tan_hfov,
         })
