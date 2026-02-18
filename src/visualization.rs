@@ -8,7 +8,10 @@ use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::components::CurrentFitTarget;
+use crate::support::ProjectionParams;
 use crate::support::extract_mesh_vertices;
+use crate::support::project_point;
+use crate::support::projection_aspect_ratio;
 
 /// Gizmo config group for fit target visualization (screen-aligned overlay).
 /// Toggle via `GizmoConfigStore::config_mut::<FitTargetGizmo>().enabled`
@@ -157,10 +160,12 @@ struct ScreenSpaceBoundary {
     max_norm_y:    f32,
     /// Average depth of boundary points from camera
     avg_depth:     f32,
-    /// Half tangent of vertical field of view
-    half_tan_vfov: f32,
-    /// Half tangent of horizontal field of view (vfov * `aspect_ratio`)
-    half_tan_hfov: f32,
+    /// Half visible extent in x (perspective: half_extent_x, ortho: area.width()/2)
+    half_extent_x: f32,
+    /// Half visible extent in y (perspective: half_extent_y, ortho: area.height()/2)
+    half_extent_y: f32,
+    /// Whether this boundary uses orthographic projection
+    is_ortho:      bool,
 }
 
 /// Camera basis vectors extracted from a `GlobalTransform`.
@@ -186,16 +191,18 @@ impl CameraBasis {
 
 impl ScreenSpaceBoundary {
     /// Creates screen space margins from a camera's view of target points.
-    /// Returns `None` if any point is behind the camera.
-    #[allow(clippy::similar_names)] // half_tan_hfov vs half_tan_vfov are standard FOV terms
+    /// Returns `None` if any point is behind the camera (perspective only).
     fn from_points(
         points: &[Vec3],
         cam_global: &GlobalTransform,
-        perspective: &PerspectiveProjection,
+        projection: &Projection,
         viewport_aspect: f32,
     ) -> Option<Self> {
-        let half_tan_vfov = (perspective.fov * 0.5).tan();
-        let half_tan_hfov = half_tan_vfov * viewport_aspect;
+        let ProjectionParams {
+            half_extent_x,
+            half_extent_y,
+            is_ortho,
+        } = ProjectionParams::from_projection(projection, viewport_aspect)?;
 
         // Get camera basis vectors from global transform
         let cam_pos = cam_global.translation();
@@ -212,19 +219,8 @@ impl ScreenSpaceBoundary {
         let mut avg_depth = 0.0;
 
         for point in points {
-            let relative = *point - cam_pos;
-            let depth = relative.dot(cam_forward);
-
-            // Check if point is behind camera
-            if depth <= 0.1 {
-                return None;
-            }
-
-            let x = relative.dot(cam_right);
-            let y = relative.dot(cam_up);
-
-            let norm_x = x / depth;
-            let norm_y = y / depth;
+            let (norm_x, norm_y, depth) =
+                project_point(*point, cam_pos, cam_right, cam_up, cam_forward, is_ortho)?;
 
             min_norm_x = min_norm_x.min(norm_x);
             max_norm_x = max_norm_x.max(norm_x);
@@ -235,10 +231,10 @@ impl ScreenSpaceBoundary {
         avg_depth /= points.len() as f32;
 
         // Calculate margins as distance from bounds to screen edges
-        let left_margin = min_norm_x - (-half_tan_hfov);
-        let right_margin = half_tan_hfov - max_norm_x;
-        let bottom_margin = min_norm_y - (-half_tan_vfov);
-        let top_margin = half_tan_vfov - max_norm_y;
+        let left_margin = min_norm_x - (-half_extent_x);
+        let right_margin = half_extent_x - max_norm_x;
+        let bottom_margin = min_norm_y - (-half_extent_y);
+        let top_margin = half_extent_y - max_norm_y;
 
         Some(Self {
             left_margin,
@@ -250,8 +246,9 @@ impl ScreenSpaceBoundary {
             min_norm_y,
             max_norm_y,
             avg_depth,
-            half_tan_vfov,
-            half_tan_hfov,
+            half_extent_x,
+            half_extent_y,
+            is_ortho,
         })
     }
 
@@ -317,25 +314,32 @@ impl ScreenSpaceBoundary {
     /// Returns the screen edges in normalized space
     fn screen_edges_normalized(&self) -> (f32, f32, f32, f32) {
         (
-            -self.half_tan_hfov,
-            self.half_tan_hfov,
-            self.half_tan_vfov,
-            -self.half_tan_vfov,
+            -self.half_extent_x,
+            self.half_extent_x,
+            self.half_extent_y,
+            -self.half_extent_y,
         )
     }
 
-    /// Converts normalized screen-space coordinates to world space
+    /// Converts normalized screen-space coordinates to world space.
+    ///
+    /// For perspective, reverses the perspective divide by multiplying by `avg_depth`.
+    /// For orthographic, coordinates are already in world units — `avg_depth` is only
+    /// used for the forward component to position the gizmo plane.
     fn normalized_to_world(&self, norm_x: f32, norm_y: f32, cam: &CameraBasis) -> Vec3 {
-        let world_x = norm_x * self.avg_depth;
-        let world_y = norm_y * self.avg_depth;
+        let (world_x, world_y) = if self.is_ortho {
+            (norm_x, norm_y)
+        } else {
+            (norm_x * self.avg_depth, norm_y * self.avg_depth)
+        };
         cam.pos + cam.right * world_x + cam.up * world_y + cam.forward * self.avg_depth
     }
 
     /// Returns the margin percentage for a given edge.
     /// Percentage represents how much of the screen width/height is margin.
     fn margin_percentage(&self, edge: Edge) -> f32 {
-        let screen_width = 2.0 * self.half_tan_hfov;
-        let screen_height = 2.0 * self.half_tan_vfov;
+        let screen_width = 2.0 * self.half_extent_x;
+        let screen_height = 2.0 * self.half_extent_y;
 
         match edge {
             Edge::Left => (self.left_margin / screen_width) * 100.0,
@@ -398,18 +402,15 @@ fn convex_hull_2d(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
     lower
 }
 
-/// Projects world-space vertices to 2D normalized screen space
-fn project_vertices_to_2d(vertices: &[Vec3], cam: &CameraBasis) -> Vec<(f32, f32)> {
+/// Projects world-space vertices to 2D normalized screen space.
+///
+/// For perspective, divides by depth. For orthographic, uses raw camera-space coordinates.
+fn project_vertices_to_2d(vertices: &[Vec3], cam: &CameraBasis, is_ortho: bool) -> Vec<(f32, f32)> {
     vertices
         .iter()
         .filter_map(|v| {
-            let relative = *v - cam.pos;
-            let depth = relative.dot(cam.forward);
-            if depth <= 0.1 {
-                return None;
-            }
-            let norm_x = relative.dot(cam.right) / depth;
-            let norm_y = relative.dot(cam.up) / depth;
+            let (norm_x, norm_y, _) =
+                project_point(*v, cam.pos, cam.right, cam.up, cam.forward, is_ortho)?;
             Some((norm_x, norm_y))
         })
         .collect()
@@ -490,13 +491,13 @@ fn draw_rectangle(
 fn norm_to_viewport(
     norm_x: f32,
     norm_y: f32,
-    half_tan_hfov: f32,
-    half_tan_vfov: f32,
+    half_extent_x: f32,
+    half_extent_y: f32,
     viewport_size: Vec2,
 ) -> Vec2 {
     Vec2::new(
-        (norm_x / half_tan_hfov + 1.0) * 0.5 * viewport_size.x,
-        (1.0 - norm_y / half_tan_vfov) * 0.5 * viewport_size.y,
+        (norm_x / half_extent_x + 1.0) * 0.5 * viewport_size.x,
+        (1.0 - norm_y / half_extent_y) * 0.5 * viewport_size.y,
     )
 }
 
@@ -511,8 +512,8 @@ fn calculate_label_pixel_position(
     let px = norm_to_viewport(
         screen_x,
         screen_y,
-        margins.half_tan_hfov,
-        margins.half_tan_vfov,
+        margins.half_extent_x,
+        margins.half_extent_y,
         viewport_size,
     );
 
@@ -681,10 +682,6 @@ fn draw_fit_target_bounds(
     let (gizmo_config, _) = config_store.config::<FitTargetGizmo>();
     let visualization_enabled = gizmo_config.enabled;
 
-    let Projection::Perspective(perspective) = projection else {
-        return;
-    };
-
     // Extract mesh vertices (same logic as zoom observers)
     let Some((vertices, _)) = extract_mesh_vertices(
         current_target.0,
@@ -700,15 +697,14 @@ fn draw_fit_target_bounds(
     let cam_basis = CameraBasis::from_global_transform(cam_global);
 
     // Get actual viewport aspect ratio
-    let aspect_ratio = if let Some(viewport_size) = cam.logical_viewport_size() {
-        viewport_size.x / viewport_size.y
-    } else {
-        perspective.aspect_ratio
+    let Some(aspect_ratio) = projection_aspect_ratio(projection, cam.logical_viewport_size())
+    else {
+        return;
     };
 
     // Calculate screen-space bounds from mesh vertices
     let Some(margins) =
-        ScreenSpaceBoundary::from_points(&vertices, cam_global, perspective, aspect_ratio)
+        ScreenSpaceBoundary::from_points(&vertices, cam_global, projection, aspect_ratio)
     else {
         return; // Target behind camera
     };
@@ -727,7 +723,7 @@ fn draw_fit_target_bounds(
 
     // Draw silhouette polygon (convex hull) when visualization is enabled
     if visualization_enabled {
-        let projected = project_vertices_to_2d(&vertices, &cam_basis);
+        let projected = project_vertices_to_2d(&vertices, &cam_basis, margins.is_ortho);
         let hull = convex_hull_2d(&projected);
         draw_silhouette_polygon(
             &mut gizmos,
@@ -743,8 +739,8 @@ fn draw_fit_target_bounds(
         let upper_left = norm_to_viewport(
             margins.min_norm_x,
             margins.max_norm_y,
-            margins.half_tan_hfov,
-            margins.half_tan_vfov,
+            margins.half_extent_x,
+            margins.half_extent_y,
             viewport_size,
         );
         let pos = Vec2::new(

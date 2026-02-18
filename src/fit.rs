@@ -6,6 +6,10 @@
 
 use bevy::prelude::*;
 
+use crate::support::ProjectionParams;
+use crate::support::project_point;
+use crate::support::projection_aspect_ratio;
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -14,7 +18,6 @@ pub const MAX_ITERATIONS: usize = 200;
 pub const TOLERANCE: f32 = 0.001; // 0.1% tolerance for convergence
 pub const CENTERING_MAX_ITERATIONS: usize = 10;
 pub const CENTERING_TOLERANCE: f32 = 0.0001; // normalized screen-space center offset
-
 /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
 /// For example, a margin of 0.08 returns 1.087 (8% margin)
 pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
@@ -56,34 +59,40 @@ pub struct ScreenSpaceBounds {
     /// Maximum normalized y coordinate in screen space
     pub max_norm_y:        f32,
     /// Harmonic mean depth of the two corners defining horizontal extremes
+    /// (1.0 for orthographic since projection is depth-independent)
     pub centering_depth_x: f32,
     /// Harmonic mean depth of the two corners defining vertical extremes
+    /// (1.0 for orthographic since projection is depth-independent)
     pub centering_depth_y: f32,
-    /// Half tangent of vertical field of view
-    pub half_tan_vfov:     f32,
-    /// Half tangent of horizontal field of view (vfov * aspect_ratio)
-    pub half_tan_hfov:     f32,
+    /// Half visible extent in x (perspective: half_tan_hfov, ortho: area.width()/2)
+    pub half_extent_x:     f32,
+    /// Half visible extent in y (perspective: half_tan_vfov, ortho: area.height()/2)
+    pub half_extent_y:     f32,
 }
 
 impl ScreenSpaceBounds {
     /// Creates screen space bounds from a camera's view of a set of points.
-    /// Returns `None` if any point is behind the camera.
+    /// Returns `None` if any point is behind the camera (perspective only).
+    ///
+    /// Works with both perspective and orthographic projections:
+    /// - **Perspective**: normalizes by depth (`x/depth`), uses harmonic mean for centering
+    /// - **Orthographic**: uses raw camera-space coordinates (depth-independent), centering depth =
+    ///   1.0
     pub fn from_points(
         points: &[Vec3],
         cam_global: &GlobalTransform,
-        perspective: &PerspectiveProjection,
+        projection: &Projection,
         viewport_aspect: f32,
         zoom_multiplier: f32,
     ) -> Option<Self> {
-        let half_tan_vfov = (perspective.fov * 0.5).tan();
-        let half_tan_hfov = half_tan_vfov * viewport_aspect;
+        let ProjectionParams {
+            half_extent_x,
+            half_extent_y,
+            is_ortho,
+        } = ProjectionParams::from_projection(projection, viewport_aspect)?;
 
         info!(
-            "Screen space: aspect={:.3} vfov={:.1}° half_tan_v={:.3} half_tan_h={:.3}",
-            viewport_aspect,
-            perspective.fov.to_degrees(),
-            half_tan_vfov,
-            half_tan_hfov
+            "Screen space: aspect={viewport_aspect:.3} half_extent_x={half_extent_x:.3} half_extent_y={half_extent_y:.3} ortho={is_ortho}"
         );
 
         // Get camera basis vectors from global transform
@@ -93,12 +102,9 @@ impl ScreenSpaceBounds {
         let cam_right = cam_rot * Vec3::X;
         let cam_up = cam_rot * Vec3::Y;
 
-        info!(
-            "Camera basis: right={:.3?} up={:.3?} forward={:.3?}",
-            cam_right, cam_up, cam_forward
-        );
+        info!("Camera basis: right={cam_right:.3?} up={cam_up:.3?} forward={cam_forward:.3?}");
 
-        // Project corners to screen space
+        // Project points to normalized screen space
         let mut min_norm_x = f32::INFINITY;
         let mut max_norm_x = f32::NEG_INFINITY;
         let mut min_norm_y = f32::INFINITY;
@@ -109,27 +115,19 @@ impl ScreenSpaceBounds {
         let mut max_y_depth = 0.0_f32;
 
         for (i, point) in points.iter().enumerate() {
-            let relative = *point - cam_pos;
-            let depth = relative.dot(cam_forward);
-
-            // Check if point is behind camera
-            if depth <= 0.1 {
-                return None;
-            }
-
-            let x = relative.dot(cam_right);
-            let y = relative.dot(cam_up);
-
-            let norm_x = x / depth;
-            let norm_y = y / depth;
+            let (norm_x, norm_y, depth) =
+                project_point(*point, cam_pos, cam_right, cam_up, cam_forward, is_ortho)?;
 
             // Log first 8 points for debugging
             if i == 0 {
                 info!("=== POINT PROJECTION ({} points) ===", points.len());
             }
             if i < 8 {
+                let relative = *point - cam_pos;
+                let screen_x = relative.dot(cam_right);
+                let screen_y = relative.dot(cam_up);
                 info!(
-                    "Point[{i}]: world=({:.0},{:.0},{:.0}) → screen_x={x:.1} screen_y={y:.1} depth={depth:.1} → norm=({norm_x:.3},{norm_y:.3})",
+                    "Point[{i}]: world=({:.0},{:.0},{:.0}) → screen_x={screen_x:.1} screen_y={screen_y:.1} depth={depth:.1} → norm=({norm_x:.3},{norm_y:.3})",
                     point.x, point.y, point.z
                 );
             }
@@ -152,23 +150,27 @@ impl ScreenSpaceBounds {
             }
         }
 
-        // Harmonic mean of the two extreme corner depths per dimension.
-        // This is the exact depth for perspective-correct centering corrections.
-        let centering_depth_x = 2.0 * min_x_depth * max_x_depth / (min_x_depth + max_x_depth);
-        let centering_depth_y = 2.0 * min_y_depth * max_y_depth / (min_y_depth + max_y_depth);
+        // Centering depths: perspective uses harmonic mean for perspective-correct
+        // centering. Ortho uses 1.0 since projection is depth-independent.
+        let (centering_depth_x, centering_depth_y) = if is_ortho {
+            (1.0, 1.0)
+        } else {
+            (
+                2.0 * min_x_depth * max_x_depth / (min_x_depth + max_x_depth),
+                2.0 * min_y_depth * max_y_depth / (min_y_depth + max_y_depth),
+            )
+        };
 
         // Determine which dimension SHOULD constrain based on aspect ratios
         let boundary_aspect = (max_norm_x - min_norm_x) / (max_norm_y - min_norm_y);
-        let screen_aspect = half_tan_hfov / half_tan_vfov;
+        let screen_aspect = half_extent_x / half_extent_y;
 
         // If boundary is wider (relative to height) than screen, width constrains
         // If boundary is taller (relative to width) than screen, height constrains
         let width_constrains = boundary_aspect > screen_aspect;
 
         info!(
-            "Aspect ratios: boundary={:.3} screen={:.3} → {} constrains",
-            boundary_aspect,
-            screen_aspect,
+            "Aspect ratios: boundary={boundary_aspect:.3} screen={screen_aspect:.3} → {} constrains",
             if width_constrains {
                 "WIDTH (horizontal)"
             } else {
@@ -179,27 +181,27 @@ impl ScreenSpaceBounds {
         // Calculate target edge for the constraining dimension only
         let (target_edge_x, target_edge_y) = if width_constrains {
             // Width constrains - set horizontal target, vertical gets extra space
-            let target_x = half_tan_hfov / zoom_multiplier;
+            let target_x = half_extent_x / zoom_multiplier;
             // Vertical target is at the boundary's aspect ratio from horizontal
             let target_y = target_x / boundary_aspect;
             (target_x, target_y)
         } else {
             // Height constrains - set vertical target, horizontal gets extra space
-            let target_y = half_tan_vfov / zoom_multiplier;
+            let target_y = half_extent_y / zoom_multiplier;
             // Horizontal target is at the boundary's aspect ratio from vertical
             let target_x = target_y * boundary_aspect;
             (target_x, target_y)
         };
 
         // Calculate margins as distance from bounds to screen edges
-        let left_margin = min_norm_x - (-half_tan_hfov);
-        let right_margin = half_tan_hfov - max_norm_x;
-        let bottom_margin = min_norm_y - (-half_tan_vfov);
-        let top_margin = half_tan_vfov - max_norm_y;
+        let left_margin = min_norm_x - (-half_extent_x);
+        let right_margin = half_extent_x - max_norm_x;
+        let bottom_margin = min_norm_y - (-half_extent_y);
+        let top_margin = half_extent_y - max_norm_y;
 
         // Target margins are the difference between screen edge and target edge
-        let target_margin_x = half_tan_hfov - target_edge_x;
-        let target_margin_y = half_tan_vfov - target_edge_y;
+        let target_margin_x = half_extent_x - target_edge_x;
+        let target_margin_y = half_extent_y - target_edge_y;
 
         // Calculate which dimension constrains
         let h_min = left_margin.min(right_margin);
@@ -211,20 +213,14 @@ impl ScreenSpaceBounds {
         };
 
         info!(
-            "Box extents: norm_x=[{:.3}, {:.3}] norm_y=[{:.3}, {:.3}]",
-            min_norm_x, max_norm_x, min_norm_y, max_norm_y
+            "Box extents: norm_x=[{min_norm_x:.3}, {max_norm_x:.3}] norm_y=[{min_norm_y:.3}, {max_norm_y:.3}]"
         );
         info!(
-            "Margins: L={:.3} R={:.3} T={:.3} B={:.3}",
-            left_margin, right_margin, top_margin, bottom_margin
+            "Margins: L={left_margin:.3} R={right_margin:.3} T={top_margin:.3} B={bottom_margin:.3}"
         );
+        info!("Targets: horiz={target_margin_x:.3} vert={target_margin_y:.3}");
         info!(
-            "Targets: horiz={:.3} vert={:.3}",
-            target_margin_x, target_margin_y
-        );
-        info!(
-            "CONSTRAINING DIMENSION: {} (margin={:.3} target={:.3})",
-            constraining_dim, constraining_margin, target_for_constraining
+            "CONSTRAINING DIMENSION: {constraining_dim} (margin={constraining_margin:.3} target={target_for_constraining:.3})"
         );
 
         Some(Self {
@@ -240,8 +236,8 @@ impl ScreenSpaceBounds {
             max_norm_y,
             centering_depth_x,
             centering_depth_y,
-            half_tan_vfov,
-            half_tan_hfov,
+            half_extent_x,
+            half_extent_y,
         })
     }
 
@@ -297,7 +293,7 @@ impl ScreenSpaceBounds {
 ///
 /// Note: A lateral camera shift doesn't change point depths, so the centering is geometrically
 /// exact for the constraining margin check.
-pub(crate) fn calculate_fit(
+pub fn calculate_fit(
     points: &[Vec3],
     geometric_center: Vec3,
     yaw: f32,
@@ -306,12 +302,15 @@ pub(crate) fn calculate_fit(
     projection: &Projection,
     camera: &Camera,
 ) -> Option<(f32, Vec3)> {
-    let Projection::Perspective(perspective) = projection else {
-        return None;
+    let aspect_ratio = projection_aspect_ratio(projection, camera.logical_viewport_size())?;
+
+    // For ortho, the camera is always at a fixed distance from focus.
+    // PanOrbitCamera sets this to `(near + far) / 2.0`.
+    let ortho_fixed_distance = match projection {
+        Projection::Orthographic(o) => Some((o.near + o.far) * 0.5),
+        _ => None,
     };
 
-    let viewport_size = camera.logical_viewport_size();
-    let aspect_ratio = viewport_size.map_or(perspective.aspect_ratio, |s| s.x / s.y);
     let zoom_multiplier = zoom_margin_multiplier(margin);
 
     let rot = Quat::from_euler(EulerRot::YXZ, yaw, -pitch, 0.0);
@@ -324,20 +323,24 @@ pub(crate) fn calculate_fit(
         .map(|c| (*c - geometric_center).length())
         .fold(0.0_f32, f32::max);
 
-    // Binary search for the correct radius
+    // Binary search for the correct radius.
+    // For perspective: radius = camera distance (changes apparent size).
+    // For ortho: PanOrbitCamera maps radius → `OrthographicProjection::scale`,
+    //   so searching over radius effectively searches over scale.
     let mut min_radius = object_radius * 0.1;
     let mut max_radius = object_radius * 100.0;
     let mut best_radius = object_radius * 2.0;
     let mut best_focus = geometric_center;
     let mut best_error = f32::INFINITY;
 
-    info!(
-        "Binary search starting: range [{:.1}, {:.1}]",
-        min_radius, max_radius
-    );
+    info!("Binary search starting: range [{min_radius:.1}, {max_radius:.1}]");
 
     for iteration in 0..MAX_ITERATIONS {
         let test_radius = (min_radius + max_radius) * 0.5;
+
+        // Build the projection to use for this iteration.
+        // For ortho, we need to compute what `area` would be at this test scale.
+        let test_projection = build_test_projection(projection, test_radius);
 
         // Step 1: find the centered focus using accurate depth-based centering
         let centered_focus = refine_focus_centering(
@@ -345,19 +348,22 @@ pub(crate) fn calculate_fit(
             geometric_center,
             test_radius,
             rot,
-            perspective,
+            &test_projection,
             aspect_ratio,
+            ortho_fixed_distance,
         );
 
-        // Step 2: evaluate margins at the centered focus position
-        let cam_pos = centered_focus + rot * Vec3::new(0.0, 0.0, test_radius);
+        // Step 2: evaluate margins at the centered focus position.
+        // For ortho, the camera distance is fixed regardless of test_radius.
+        let cam_distance = ortho_fixed_distance.unwrap_or(test_radius);
+        let cam_pos = centered_focus + rot * Vec3::new(0.0, 0.0, cam_distance);
         let cam_global =
             GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
 
         let Some(bounds) = ScreenSpaceBounds::from_points(
             points,
             &cam_global,
-            perspective,
+            &test_projection,
             aspect_ratio,
             zoom_multiplier,
         ) else {
@@ -413,32 +419,72 @@ pub(crate) fn calculate_fit(
     Some((best_radius, best_focus))
 }
 
+/// Builds a test projection with the given radius/scale for binary search iterations.
+///
+/// For perspective, returns the original projection unchanged.
+/// For orthographic, creates a modified projection with `area` recomputed for the test scale,
+/// since `PanOrbitCamera` maps `radius` → `OrthographicProjection::scale`.
+fn build_test_projection(projection: &Projection, test_radius: f32) -> Projection {
+    match projection {
+        Projection::Perspective(_) => projection.clone(),
+        Projection::Orthographic(ortho) => {
+            // Compute what the area would be at this scale.
+            // The current area is `base_size * current_scale`, so base_size = area / scale.
+            // At test scale: new_area = base_size * test_radius.
+            let current_scale = ortho.scale;
+            let scale_ratio = if current_scale.abs() > f32::EPSILON {
+                test_radius / current_scale
+            } else {
+                1.0
+            };
+            let new_area = Rect::new(
+                ortho.area.min.x * scale_ratio,
+                ortho.area.min.y * scale_ratio,
+                ortho.area.max.x * scale_ratio,
+                ortho.area.max.y * scale_ratio,
+            );
+            Projection::Orthographic(OrthographicProjection {
+                scale: test_radius,
+                area: new_area,
+                ..*ortho
+            })
+        },
+        _ => projection.clone(),
+    }
+}
+
 /// Shifts the camera focus so the projected bounding box is centered on screen.
 ///
-/// Each correction step uses the harmonic mean of the depths of the two extreme points
-/// per dimension. This is the exact inverse of perspective projection: when the camera
-/// shifts laterally by `delta`, a point at depth `d` shifts by `-delta/d` in normalized
-/// screen space, so the screen-space center of two points at depths `d1` and `d2` shifts
-/// by `-delta * (1/d1 + 1/d2) / 2`. The harmonic mean `2*d1*d2/(d1+d2)` inverts this
+/// For perspective, each correction step uses the harmonic mean of the depths of the two
+/// extreme points per dimension. This is the exact inverse of perspective projection: when
+/// the camera shifts laterally by `delta`, a point at depth `d` shifts by `-delta/d` in
+/// normalized screen space, so the screen-space center of two points at depths `d1` and `d2`
+/// shifts by `-delta * (1/d1 + 1/d2) / 2`. The harmonic mean `2*d1*d2/(d1+d2)` inverts this
 /// exactly. Convergence typically takes 1-2 iterations.
+///
+/// For orthographic, centering is depth-independent (centering_depth = 1.0), so the shift
+/// is a direct 1:1 world-unit correction.
 fn refine_focus_centering(
     points: &[Vec3],
     initial_focus: Vec3,
     radius: f32,
     rot: Quat,
-    perspective: &PerspectiveProjection,
+    projection: &Projection,
     aspect_ratio: f32,
+    ortho_fixed_distance: Option<f32>,
 ) -> Vec3 {
     let cam_right = rot * Vec3::X;
     let cam_up = rot * Vec3::Y;
 
+    let cam_distance = ortho_fixed_distance.unwrap_or(radius);
+
     let mut focus = initial_focus;
     for _ in 0..CENTERING_MAX_ITERATIONS {
-        let cam_pos = focus + rot * Vec3::new(0.0, 0.0, radius);
+        let cam_pos = focus + rot * Vec3::new(0.0, 0.0, cam_distance);
         let cam_global =
             GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
         let Some(bounds) =
-            ScreenSpaceBounds::from_points(points, &cam_global, perspective, aspect_ratio, 1.0)
+            ScreenSpaceBounds::from_points(points, &cam_global, projection, aspect_ratio, 1.0)
         else {
             break;
         };

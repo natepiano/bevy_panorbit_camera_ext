@@ -9,8 +9,12 @@
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 
+use bevy::camera::ScalingMode;
 use bevy::color::palettes::basic::SILVER;
 use bevy::color::palettes::css::DEEP_SKY_BLUE;
+use bevy::light::CascadeShadowConfig;
+use bevy::light::CascadeShadowConfigBuilder;
+use bevy::light::DirectionalLightShadowMap;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_brp_extras::BrpExtrasPlugin;
@@ -32,18 +36,38 @@ use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
 
 const ZOOM_DURATION_MS: f32 = 500.0;
-const ZOOM_MARGIN: f32 = 0.25;
+const ZOOM_MARGIN_MESH: f32 = 0.25;
+const ZOOM_MARGIN_SCENE: f32 = 0.08;
 const GIZMO_SCALE: f32 = 1.03;
 const DRAG_SENSITIVITY: f32 = 0.02;
 const MESH_CENTER_Y: f32 = 1.0;
 const EVENT_LOG_FONT_SIZE: f32 = 14.0;
 const EVENT_LINE_LIFETIME_SECS: f32 = 8.0;
 const ANIMATE_FIT_DURATION_MS: f32 = 1200.0;
-const CAMERA_START_PITCH: f32 = 0.6;
+const CAMERA_START_YAW: f32 = -0.2;
+const CAMERA_START_PITCH: f32 = 0.4;
 const ORBIT_MOVE_DURATION_MS: f32 = 800.0;
-const ORBIT_RADIUS: f32 = 8.0;
-const ORBIT_FOCUS: Vec3 = Vec3::new(0.0, 1.0, 0.0);
-const ORBIT_HEIGHT: f32 = 3.0;
+const CASCADE_MAX_DISTANCE_PERSPECTIVE: f32 = 20.0;
+const CASCADE_MAX_DISTANCE_ORTHOGRAPHIC: f32 = 40.0;
+
+fn cascade_shadow_config_perspective() -> CascadeShadowConfig {
+    CascadeShadowConfigBuilder {
+        maximum_distance: CASCADE_MAX_DISTANCE_PERSPECTIVE,
+        first_cascade_far_bound: 5.0,
+        ..default()
+    }
+    .build()
+}
+
+fn cascade_shadow_config_orthographic() -> CascadeShadowConfig {
+    CascadeShadowConfigBuilder {
+        num_cascades: 4,
+        maximum_distance: CASCADE_MAX_DISTANCE_ORTHOGRAPHIC,
+        first_cascade_far_bound: 4.0,
+        ..default()
+    }
+    .build()
+}
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 enum AppState {
@@ -62,6 +86,7 @@ fn main() {
             MeshPickingPlugin,
             BrpExtrasPlugin::default(),
         ))
+        .insert_resource(DirectionalLightShadowMap { size: 4096 })
         .init_state::<AppState>()
         .init_resource::<ActiveEasing>()
         .init_resource::<EventLog>()
@@ -75,6 +100,7 @@ fn main() {
             (
                 draw_selection_gizmo,
                 toggle_debug_visualization,
+                toggle_projection,
                 randomize_easing,
                 animate_camera,
                 animate_fit_to_scene,
@@ -105,7 +131,7 @@ struct EventLine {
 struct ActiveEasing(EaseFunction);
 
 impl Default for ActiveEasing {
-    fn default() -> Self { Self(EaseFunction::BackOut) }
+    fn default() -> Self { Self(EaseFunction::CubicOut) }
 }
 
 const ALL_EASINGS: &[EaseFunction] = &[
@@ -168,6 +194,7 @@ enum MeshShape {
 struct SceneEntities {
     camera:       Entity,
     scene_bounds: Entity,
+    light:        Entity,
 }
 
 fn setup(
@@ -175,8 +202,8 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Ground plane (clickable — clicking it deselects and zooms out)
-    commands
+    // Ground plane (clickable from above — deselects and zooms to scene bounds)
+    let ground = commands
         .spawn((
             Mesh3d(meshes.add(Plane3d::default().mesh().size(12.0, 12.0))),
             MeshMaterial3d(materials.add(StandardMaterial {
@@ -187,17 +214,35 @@ fn setup(
                 ..default()
             })),
         ))
-        .observe(on_ground_clicked);
+        .observe(on_ground_clicked)
+        .id();
+
+    // Underside plane (clickable from below — deselects and animates back to scene)
+    commands
+        .spawn((
+            Mesh3d(meshes.add(Plane3d::default().mesh().size(12.0, 12.0))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgba(0.0, 0.0, 0.0, 0.0),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_rotation(Quat::from_rotation_x(PI)),
+        ))
+        .observe(on_below_clicked);
 
     // Directional light
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 1500.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI / 4.0, -PI / 4.0)),
-    ));
+    let light = commands
+        .spawn((
+            DirectionalLight {
+                illuminance: 1500.0,
+                shadows_enabled: true,
+                ..default()
+            },
+            cascade_shadow_config_perspective(),
+            Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI / 4.0, -PI / 4.0)),
+        ))
+        .id();
 
     // Cuboid
     let cuboid_size = Vec3::new(1.0, 1.0, 1.0);
@@ -246,21 +291,6 @@ fn setup(
         .observe(on_mesh_clicked)
         .observe(on_mesh_dragged);
 
-    // Invisible scene bounds sphere (zoom-out target)
-    let scene_bounds = commands
-        .spawn((
-            Mesh3d(meshes.add(Sphere::new(3.5).mesh().uv(128, 64))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgba(0.0, 0.0, 0.0, 0.0),
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                ..default()
-            })),
-            Transform::from_xyz(0.0, 1.0, 0.0),
-            Pickable::IGNORE,
-        ))
-        .id();
-
     // Camera (middle-click orbit, shift+middle pan, trackpad support)
     let camera = commands
         .spawn(PanOrbitCamera {
@@ -272,7 +302,7 @@ fn setup(
                 modifier_zoom: Some(KeyCode::ControlLeft),
             },
             trackpad_pinch_to_zoom_enabled: true,
-            radius: Some(8.0),
+            yaw: Some(CAMERA_START_YAW),
             pitch: Some(CAMERA_START_PITCH),
             ..default()
         })
@@ -280,7 +310,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Press:\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'B' reset to 'BackOut' easing"),
+        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'C' reset to 'CubicOut' easing"),
         TextFont {
             font_size: 13.0,
             ..default()
@@ -312,7 +342,8 @@ fn setup(
 
     commands.insert_resource(SceneEntities {
         camera,
-        scene_bounds,
+        scene_bounds: ground,
+        light,
     });
 }
 
@@ -329,10 +360,12 @@ fn initial_fit_to_scene(
     if meshes.get(&mesh3d.0).is_none() {
         return;
     }
-    commands.trigger(ZoomToFit::new(
+    commands.trigger(AnimateToFit::new(
         scene.camera,
         scene.scene_bounds,
-        ZOOM_MARGIN,
+        CAMERA_START_YAW,
+        CAMERA_START_PITCH,
+        ZOOM_MARGIN_SCENE,
         0.0,
         EaseFunction::QuadraticInOut,
     ));
@@ -355,7 +388,7 @@ fn on_mesh_clicked(
     commands.trigger(ZoomToFit::new(
         scene.camera,
         clicked,
-        ZOOM_MARGIN,
+        ZOOM_MARGIN_MESH,
         ZOOM_DURATION_MS,
         active_easing.0,
     ));
@@ -375,8 +408,30 @@ fn on_ground_clicked(
     commands.trigger(ZoomToFit::new(
         scene.camera,
         scene.scene_bounds,
-        ZOOM_MARGIN,
+        ZOOM_MARGIN_SCENE,
         ZOOM_DURATION_MS,
+        active_easing.0,
+    ));
+}
+
+fn on_below_clicked(
+    _click: On<Pointer<Click>>,
+    mut commands: Commands,
+    scene: Res<SceneEntities>,
+    selected: Query<Entity, With<Selected>>,
+    active_easing: Res<ActiveEasing>,
+) {
+    for entity in &selected {
+        commands.entity(entity).remove::<Selected>();
+    }
+
+    commands.trigger(AnimateToFit::new(
+        scene.camera,
+        scene.scene_bounds,
+        CAMERA_START_YAW,
+        CAMERA_START_PITCH,
+        ZOOM_MARGIN_SCENE,
+        ANIMATE_FIT_DURATION_MS,
         active_easing.0,
     ));
 }
@@ -446,38 +501,56 @@ fn animate_camera(
     mut commands: Commands,
     scene: Res<SceneEntities>,
     easing: Res<ActiveEasing>,
+    camera_query: Query<&PanOrbitCamera>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyA) {
         return;
     }
 
-    let e = easing.0;
+    let Ok(camera) = camera_query.get(scene.camera) else {
+        return;
+    };
 
-    // 4 moves that orbit around the focus point
+    let e = easing.0;
+    let yaw = camera.target_yaw;
+    let pitch = camera.target_pitch;
+    let radius = camera.target_radius;
+    let focus = camera.target_focus;
+    let half_pi = PI / 2.0;
+
+    // 4 moves that orbit PI/2 at a time from the current position
     let moves = VecDeque::from([
-        CameraMove::ToPosition {
-            translation: Vec3::new(ORBIT_RADIUS, ORBIT_HEIGHT, 0.0) + ORBIT_FOCUS,
-            focus:       ORBIT_FOCUS,
+        CameraMove::ToOrbit {
+            focus,
+            yaw: yaw + half_pi,
+            pitch,
+            radius,
             duration_ms: ORBIT_MOVE_DURATION_MS,
-            easing:      e,
+            easing: e,
         },
-        CameraMove::ToPosition {
-            translation: Vec3::new(0.0, ORBIT_HEIGHT, -ORBIT_RADIUS) + ORBIT_FOCUS,
-            focus:       ORBIT_FOCUS,
+        CameraMove::ToOrbit {
+            focus,
+            yaw: yaw + half_pi * 2.0,
+            pitch,
+            radius,
             duration_ms: ORBIT_MOVE_DURATION_MS,
-            easing:      e,
+            easing: e,
         },
-        CameraMove::ToPosition {
-            translation: Vec3::new(-ORBIT_RADIUS, ORBIT_HEIGHT, 0.0) + ORBIT_FOCUS,
-            focus:       ORBIT_FOCUS,
+        CameraMove::ToOrbit {
+            focus,
+            yaw: yaw + half_pi * 3.0,
+            pitch,
+            radius,
             duration_ms: ORBIT_MOVE_DURATION_MS,
-            easing:      e,
+            easing: e,
         },
-        CameraMove::ToPosition {
-            translation: Vec3::new(0.0, ORBIT_HEIGHT, ORBIT_RADIUS) + ORBIT_FOCUS,
-            focus:       ORBIT_FOCUS,
+        CameraMove::ToOrbit {
+            focus,
+            yaw: yaw + half_pi * 4.0,
+            pitch,
+            radius,
             duration_ms: ORBIT_MOVE_DURATION_MS,
-            easing:      e,
+            easing: e,
         },
     ]);
 
@@ -495,9 +568,9 @@ fn randomize_easing(
         easing.0 = ALL_EASINGS[index];
         log.push(format!("Easing: {:#?}", easing.0), &time);
     }
-    if keyboard.just_pressed(KeyCode::KeyB) {
-        easing.0 = EaseFunction::BackOut;
-        log.push("Easing: reset to Backout".into(), &time);
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        easing.0 = EaseFunction::CubicOut;
+        log.push("Easing: reset to CubicOut".into(), &time);
     }
 }
 
@@ -514,12 +587,76 @@ fn animate_fit_to_scene(
     commands.trigger(AnimateToFit::new(
         scene.camera,
         scene.scene_bounds,
-        0.0,
+        CAMERA_START_YAW,
         CAMERA_START_PITCH,
-        ZOOM_MARGIN,
+        ZOOM_MARGIN_SCENE,
         ANIMATE_FIT_DURATION_MS,
         easing.0,
     ));
+}
+
+/// Toggles between perspective and orthographic projection, then re-fits the scene.
+///
+/// The fit is deferred one frame via `pending_fit` because `PanOrbitCamera` needs to
+/// process the projection change (syncing radius ↔ orthographic scale) before the
+/// fit calculation can produce correct results.
+#[allow(clippy::too_many_arguments)]
+fn toggle_projection(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    scene: Res<SceneEntities>,
+    active_easing: Res<ActiveEasing>,
+    mut camera_query: Query<(&mut Projection, &mut PanOrbitCamera)>,
+    time: Res<Time>,
+    mut log: ResMut<EventLog>,
+    mut pending_fit: Local<bool>,
+) {
+    // Deferred fit: projection was changed last frame, `PanOrbitCamera` has now synced.
+    if *pending_fit {
+        *pending_fit = false;
+        commands.trigger(AnimateToFit::new(
+            scene.camera,
+            scene.scene_bounds,
+            CAMERA_START_YAW,
+            CAMERA_START_PITCH,
+            ZOOM_MARGIN_SCENE,
+            ANIMATE_FIT_DURATION_MS,
+            active_easing.0,
+        ));
+        return;
+    }
+
+    if !keyboard.just_pressed(KeyCode::KeyP) {
+        return;
+    }
+    let Ok((mut projection, mut camera)) = camera_query.single_mut() else {
+        return;
+    };
+    match *projection {
+        Projection::Perspective(_) => {
+            *projection = Projection::from(OrthographicProjection {
+                scaling_mode: ScalingMode::FixedVertical {
+                    viewport_height: 1.0,
+                },
+                far: 40.0,
+                ..OrthographicProjection::default_3d()
+            });
+            commands
+                .entity(scene.light)
+                .insert(cascade_shadow_config_orthographic());
+            log.push("Projection: Orthographic".into(), &time);
+        },
+        Projection::Orthographic(_) => {
+            *projection = Projection::Perspective(PerspectiveProjection::default());
+            commands
+                .entity(scene.light)
+                .insert(cascade_shadow_config_perspective());
+            log.push("Projection: Perspective".into(), &time);
+        },
+        _ => {},
+    }
+    camera.force_update = true;
+    *pending_fit = true;
 }
 
 // ============================================================================
@@ -566,7 +703,7 @@ fn log_camera_move_end(_event: On<CameraMoveEnd>, time: Res<Time>, mut log: ResM
 fn log_zoom_begin(event: On<ZoomBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
     log.push(
         format!(
-            "ZoomBegin\n  margin={:.1}\n  duration={:.0}ms\n  easing={:?}",
+            "ZoomBegin\n  margin={:.2}\n  duration={:.0}ms\n  easing={:?}",
             event.margin, event.duration_ms, event.easing,
         ),
         &time,
