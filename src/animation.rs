@@ -8,11 +8,11 @@ use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
+use crate::components::ZoomAnimationMarker;
 use crate::events::AnimationEnd;
 use crate::events::CameraMoveBegin;
 use crate::events::CameraMoveEnd;
 use crate::events::ZoomEnd;
-use crate::extension::ZoomAnimationMarker;
 
 /// Individual camera movement with target position and duration.
 ///
@@ -269,7 +269,7 @@ pub fn process_camera_move_list(
                 }
                 let pitch_diff = pitch_target - *start_pitch;
 
-                // Interpolate to target (single code path for both variants)
+                // `ToPosition` and `ToOrbit` are both normalized to orbital params above
                 pan_orbit.target_focus = start_focus.lerp(current_move.focus(), t_interp);
                 pan_orbit.target_radius =
                     (canonical_radius - *start_radius).mul_add(t_interp, *start_radius);

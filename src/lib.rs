@@ -7,37 +7,40 @@
 use bevy::prelude::*;
 
 mod animation;
+mod components;
 mod events;
-mod extension;
-mod smoothness;
+mod fit;
+mod observers;
+mod support;
 mod visualization;
-mod zoom;
 
-// Public API - Completion events
 // Public API - Animation types
-// Internal - used by plugin, not for external use
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
 use animation::process_camera_move_list;
+// Public API - Components
+pub use components::CurrentFitTarget;
+pub use components::SmoothnessStash;
+pub use components::ZoomAnimationMarker;
+// Public API - Events
+pub use events::AnimateToFit;
 pub use events::AnimationBegin;
 pub use events::AnimationEnd;
 pub use events::CameraMoveBegin;
 pub use events::CameraMoveEnd;
+pub use events::PlayAnimation;
+pub use events::SetFitTarget;
 pub use events::ZoomBegin;
 pub use events::ZoomEnd;
-pub use extension::AnimateToFit;
-// Public API - Traits
-pub use extension::PanOrbitCameraExt;
-pub use extension::PlayAnimation;
-pub use extension::SetFitTarget;
-pub use extension::ZoomAnimationMarker;
-pub use extension::ZoomToFit;
-use extension::on_animate_to_fit;
-use extension::on_play_animation;
-use extension::on_set_fit_target;
-use extension::on_zoom_to_fit;
-pub use smoothness::SmoothnessStash;
-use smoothness::restore_smoothness_on_move_end;
+pub use events::ZoomToFit;
+// Public API - Fit types
+pub use fit::Edge;
+pub use fit::ScreenSpaceBounds;
+use observers::on_animate_to_fit;
+use observers::on_play_animation;
+use observers::on_set_fit_target;
+use observers::on_zoom_to_fit;
+use observers::restore_smoothness_on_move_end;
 // Public API - Gizmo groups (for enabling/disabling)
 pub use visualization::FitTargetGizmo;
 pub use visualization::FitTargetMargins;
@@ -45,9 +48,6 @@ pub use visualization::FitTargetMargins;
 pub use visualization::FitTargetVisualizationConfig;
 // Public API - Plugins
 pub use visualization::FitTargetVisualizationPlugin;
-// Public API - Zoom types
-pub use zoom::Edge;
-pub use zoom::ScreenSpaceBounds;
 
 /// Plugin that adds all camera extension functionality
 pub struct PanOrbitCameraExtPlugin;

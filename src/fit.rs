@@ -1,8 +1,15 @@
-//! Zoom-to-fit convergence system for framing objects in the camera view
+//! Fit algorithm for framing objects in the camera view.
+//!
+//! Provides screen-space projection, margin calculation, and a binary search convergence
+//! loop that finds the optimal camera radius and focus to frame a set of mesh vertices
+//! with a specified margin.
 
 use bevy::prelude::*;
 
-// Algorithm constants (internal implementation details)
+// ============================================================================
+// Constants
+// ============================================================================
+
 pub const MAX_ITERATIONS: usize = 200;
 pub const TOLERANCE: f32 = 0.001; // 0.1% tolerance for convergence
 pub const CENTERING_MAX_ITERATIONS: usize = 10;
@@ -11,6 +18,10 @@ pub const CENTERING_TOLERANCE: f32 = 0.0001; // normalized screen-space center o
 /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
 /// For example, a margin of 0.08 returns 1.087 (8% margin)
 pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
+
+// ============================================================================
+// Types
+// ============================================================================
 
 /// Screen edge identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,4 +281,172 @@ impl ScreenSpaceBounds {
         let span_y = self.max_norm_y - self.min_norm_y;
         (span_x, span_y)
     }
+}
+
+// ============================================================================
+// Convergence algorithm
+// ============================================================================
+
+/// Calculates the optimal radius and centered focus to fit pre-extracted vertices in the camera
+/// view. The focus is adjusted so the projected mesh silhouette is centered in the viewport.
+///
+/// For each candidate radius, computes the focus that centers the projected silhouette in the
+/// viewport (since the geometric center doesn't project to screen center from off-axis angles),
+/// then evaluates margins at that centered position. Returns the `(radius, focus)` pair where
+/// the constraining margin equals the target and the silhouette is centered.
+///
+/// Note: A lateral camera shift doesn't change point depths, so the centering is geometrically
+/// exact for the constraining margin check.
+pub(crate) fn calculate_fit(
+    points: &[Vec3],
+    geometric_center: Vec3,
+    yaw: f32,
+    pitch: f32,
+    margin: f32,
+    projection: &Projection,
+    camera: &Camera,
+) -> Option<(f32, Vec3)> {
+    let Projection::Perspective(perspective) = projection else {
+        return None;
+    };
+
+    let viewport_size = camera.logical_viewport_size();
+    let aspect_ratio = viewport_size.map_or(perspective.aspect_ratio, |s| s.x / s.y);
+    let zoom_multiplier = zoom_margin_multiplier(margin);
+
+    let rot = Quat::from_euler(EulerRot::YXZ, yaw, -pitch, 0.0);
+
+    // Compute the object's bounding sphere radius from points for sensible search bounds.
+    // The search range is based purely on object size to ensure deterministic results
+    // regardless of the camera's current radius.
+    let object_radius = points
+        .iter()
+        .map(|c| (*c - geometric_center).length())
+        .fold(0.0_f32, f32::max);
+
+    // Binary search for the correct radius
+    let mut min_radius = object_radius * 0.1;
+    let mut max_radius = object_radius * 100.0;
+    let mut best_radius = object_radius * 2.0;
+    let mut best_focus = geometric_center;
+    let mut best_error = f32::INFINITY;
+
+    info!(
+        "Binary search starting: range [{:.1}, {:.1}]",
+        min_radius, max_radius
+    );
+
+    for iteration in 0..MAX_ITERATIONS {
+        let test_radius = (min_radius + max_radius) * 0.5;
+
+        // Step 1: find the centered focus using accurate depth-based centering
+        let centered_focus = refine_focus_centering(
+            points,
+            geometric_center,
+            test_radius,
+            rot,
+            perspective,
+            aspect_ratio,
+        );
+
+        // Step 2: evaluate margins at the centered focus position
+        let cam_pos = centered_focus + rot * Vec3::new(0.0, 0.0, test_radius);
+        let cam_global =
+            GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
+
+        let Some(bounds) = ScreenSpaceBounds::from_points(
+            points,
+            &cam_global,
+            perspective,
+            aspect_ratio,
+            zoom_multiplier,
+        ) else {
+            info!(
+                "Iteration {iteration}: Points behind camera at radius {test_radius:.1}, searching higher"
+            );
+            min_radius = test_radius;
+            continue;
+        };
+
+        // Find constraining dimension (minimum margin)
+        let h_min = bounds.left_margin.min(bounds.right_margin);
+        let v_min = bounds.top_margin.min(bounds.bottom_margin);
+
+        let (current_margin, target_margin, dimension) = if h_min < v_min {
+            (h_min, bounds.target_margin_x, "H")
+        } else {
+            (v_min, bounds.target_margin_y, "V")
+        };
+
+        info!(
+            "Iteration {iteration}: radius={test_radius:.1} | {dimension} margin={current_margin:.3} \
+             target={target_margin:.3} | L={:.3} R={:.3} T={:.3} B={:.3} | range=[{min_radius:.1}, {max_radius:.1}]",
+            bounds.left_margin, bounds.right_margin, bounds.top_margin, bounds.bottom_margin
+        );
+
+        // Track the closest match to target margin
+        let margin_error = (current_margin - target_margin).abs();
+        if margin_error < best_error {
+            best_error = margin_error;
+            best_radius = test_radius;
+            best_focus = centered_focus;
+        }
+
+        if current_margin > target_margin {
+            max_radius = test_radius;
+        } else {
+            min_radius = test_radius;
+        }
+
+        if (max_radius - min_radius) < 0.001 {
+            info!(
+                "Iteration {iteration}: Converged to best radius {best_radius:.3} error={best_error:.5}"
+            );
+            return Some((best_radius, best_focus));
+        }
+    }
+
+    info!(
+        "Binary search did not converge in {MAX_ITERATIONS} iterations. Using best radius {best_radius:.1}"
+    );
+
+    Some((best_radius, best_focus))
+}
+
+/// Shifts the camera focus so the projected bounding box is centered on screen.
+///
+/// Each correction step uses the harmonic mean of the depths of the two extreme points
+/// per dimension. This is the exact inverse of perspective projection: when the camera
+/// shifts laterally by `delta`, a point at depth `d` shifts by `-delta/d` in normalized
+/// screen space, so the screen-space center of two points at depths `d1` and `d2` shifts
+/// by `-delta * (1/d1 + 1/d2) / 2`. The harmonic mean `2*d1*d2/(d1+d2)` inverts this
+/// exactly. Convergence typically takes 1-2 iterations.
+fn refine_focus_centering(
+    points: &[Vec3],
+    initial_focus: Vec3,
+    radius: f32,
+    rot: Quat,
+    perspective: &PerspectiveProjection,
+    aspect_ratio: f32,
+) -> Vec3 {
+    let cam_right = rot * Vec3::X;
+    let cam_up = rot * Vec3::Y;
+
+    let mut focus = initial_focus;
+    for _ in 0..CENTERING_MAX_ITERATIONS {
+        let cam_pos = focus + rot * Vec3::new(0.0, 0.0, radius);
+        let cam_global =
+            GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
+        let Some(bounds) =
+            ScreenSpaceBounds::from_points(points, &cam_global, perspective, aspect_ratio, 1.0)
+        else {
+            break;
+        };
+        let (cx, cy) = bounds.center();
+        if cx.abs() < CENTERING_TOLERANCE && cy.abs() < CENTERING_TOLERANCE {
+            break;
+        }
+        focus += cam_right * cx * bounds.centering_depth_x + cam_up * cy * bounds.centering_depth_y;
+    }
+    focus
 }

@@ -7,8 +7,8 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
-use crate::extension::CurrentFitTarget;
-use crate::extension::extract_mesh_vertices;
+use crate::components::CurrentFitTarget;
+use crate::support::extract_mesh_vertices;
 
 /// Gizmo config group for fit target visualization (screen-aligned overlay).
 /// Toggle via `GizmoConfigStore::config_mut::<FitTargetGizmo>().enabled`
@@ -755,8 +755,8 @@ fn draw_fit_target_bounds(
     }
 
     // Draw lines from visible boundary edges to screen edges and create margin labels
-    let h_balanced = margins.is_horizontally_balanced(crate::zoom::TOLERANCE);
-    let v_balanced = margins.is_vertically_balanced(crate::zoom::TOLERANCE);
+    let h_balanced = margins.is_horizontally_balanced(crate::fit::TOLERANCE);
+    let v_balanced = margins.is_vertically_balanced(crate::fit::TOLERANCE);
 
     // Track which edges are currently visible for label cleanup
     let mut visible_edges: Vec<Edge> = Vec::new();
