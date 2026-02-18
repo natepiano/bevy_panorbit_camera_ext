@@ -91,18 +91,12 @@ impl ScreenSpaceBounds {
             is_ortho,
         } = ProjectionParams::from_projection(projection, viewport_aspect)?;
 
-        info!(
-            "Screen space: aspect={viewport_aspect:.3} half_extent_x={half_extent_x:.3} half_extent_y={half_extent_y:.3} ortho={is_ortho}"
-        );
-
         // Get camera basis vectors from global transform
         let cam_pos = cam_global.translation();
         let cam_rot = cam_global.rotation();
         let cam_forward = cam_rot * Vec3::NEG_Z;
         let cam_right = cam_rot * Vec3::X;
         let cam_up = cam_rot * Vec3::Y;
-
-        info!("Camera basis: right={cam_right:.3?} up={cam_up:.3?} forward={cam_forward:.3?}");
 
         // Project points to normalized screen space
         let mut min_norm_x = f32::INFINITY;
@@ -114,23 +108,9 @@ impl ScreenSpaceBounds {
         let mut min_y_depth = 0.0_f32;
         let mut max_y_depth = 0.0_f32;
 
-        for (i, point) in points.iter().enumerate() {
+        for point in points {
             let (norm_x, norm_y, depth) =
                 project_point(*point, cam_pos, cam_right, cam_up, cam_forward, is_ortho)?;
-
-            // Log first 8 points for debugging
-            if i == 0 {
-                info!("=== POINT PROJECTION ({} points) ===", points.len());
-            }
-            if i < 8 {
-                let relative = *point - cam_pos;
-                let screen_x = relative.dot(cam_right);
-                let screen_y = relative.dot(cam_up);
-                info!(
-                    "Point[{i}]: world=({:.0},{:.0},{:.0}) → screen_x={screen_x:.1} screen_y={screen_y:.1} depth={depth:.1} → norm=({norm_x:.3},{norm_y:.3})",
-                    point.x, point.y, point.z
-                );
-            }
 
             if norm_x < min_norm_x {
                 min_norm_x = norm_x;
@@ -169,15 +149,6 @@ impl ScreenSpaceBounds {
         // If boundary is taller (relative to width) than screen, height constrains
         let width_constrains = boundary_aspect > screen_aspect;
 
-        info!(
-            "Aspect ratios: boundary={boundary_aspect:.3} screen={screen_aspect:.3} → {} constrains",
-            if width_constrains {
-                "WIDTH (horizontal)"
-            } else {
-                "HEIGHT (vertical)"
-            }
-        );
-
         // Calculate target edge for the constraining dimension only
         let (target_edge_x, target_edge_y) = if width_constrains {
             // Width constrains - set horizontal target, vertical gets extra space
@@ -202,26 +173,6 @@ impl ScreenSpaceBounds {
         // Target margins are the difference between screen edge and target edge
         let target_margin_x = half_extent_x - target_edge_x;
         let target_margin_y = half_extent_y - target_edge_y;
-
-        // Calculate which dimension constrains
-        let h_min = left_margin.min(right_margin);
-        let v_min = top_margin.min(bottom_margin);
-        let (constraining_dim, constraining_margin, target_for_constraining) = if h_min < v_min {
-            ("HORIZONTAL", h_min, target_margin_x)
-        } else {
-            ("VERTICAL", v_min, target_margin_y)
-        };
-
-        info!(
-            "Box extents: norm_x=[{min_norm_x:.3}, {max_norm_x:.3}] norm_y=[{min_norm_y:.3}, {max_norm_y:.3}]"
-        );
-        info!(
-            "Margins: L={left_margin:.3} R={right_margin:.3} T={top_margin:.3} B={bottom_margin:.3}"
-        );
-        info!("Targets: horiz={target_margin_x:.3} vert={target_margin_y:.3}");
-        info!(
-            "CONSTRAINING DIMENSION: {constraining_dim} (margin={constraining_margin:.3} target={target_for_constraining:.3})"
-        );
 
         Some(Self {
             left_margin,
@@ -333,7 +284,7 @@ pub fn calculate_fit(
     let mut best_focus = geometric_center;
     let mut best_error = f32::INFINITY;
 
-    info!("Binary search starting: range [{min_radius:.1}, {max_radius:.1}]");
+    debug!("Binary search starting: range [{min_radius:.1}, {max_radius:.1}]");
 
     for iteration in 0..MAX_ITERATIONS {
         let test_radius = (min_radius + max_radius) * 0.5;
@@ -367,7 +318,7 @@ pub fn calculate_fit(
             aspect_ratio,
             zoom_multiplier,
         ) else {
-            info!(
+            warn!(
                 "Iteration {iteration}: Points behind camera at radius {test_radius:.1}, searching higher"
             );
             min_radius = test_radius;
@@ -384,7 +335,7 @@ pub fn calculate_fit(
             (v_min, bounds.target_margin_y, "V")
         };
 
-        info!(
+        debug!(
             "Iteration {iteration}: radius={test_radius:.1} | {dimension} margin={current_margin:.3} \
              target={target_margin:.3} | L={:.3} R={:.3} T={:.3} B={:.3} | range=[{min_radius:.1}, {max_radius:.1}]",
             bounds.left_margin, bounds.right_margin, bounds.top_margin, bounds.bottom_margin
@@ -405,14 +356,14 @@ pub fn calculate_fit(
         }
 
         if (max_radius - min_radius) < 0.001 {
-            info!(
+            debug!(
                 "Iteration {iteration}: Converged to best radius {best_radius:.3} error={best_error:.5}"
             );
             return Some((best_radius, best_focus));
         }
     }
 
-    info!(
+    warn!(
         "Binary search did not converge in {MAX_ITERATIONS} iterations. Using best radius {best_radius:.1}"
     );
 

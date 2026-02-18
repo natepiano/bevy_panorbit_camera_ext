@@ -51,7 +51,7 @@ pub fn on_zoom_to_fit(
         easing,
     });
 
-    info!(
+    debug!(
         "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={duration_ms:.0}",
         camera.target_yaw, camera.target_pitch, camera.target_focus, camera.target_radius
     );
