@@ -17,6 +17,8 @@ pub const MAX_ITERATIONS: usize = 200;
 pub const TOLERANCE: f32 = 0.001; // 0.1% tolerance for convergence
 pub const CENTERING_MAX_ITERATIONS: usize = 10;
 pub const CENTERING_TOLERANCE: f32 = 0.0001; // normalized screen-space center offset
+pub const MIN_MARGIN: f32 = 0.0;
+pub const MAX_MARGIN: f32 = 0.9999;
 /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
 /// For example, a margin of 0.08 returns 1.087 (8% margin)
 pub const fn zoom_margin_multiplier(margin: f32) -> f32 {
@@ -89,6 +91,17 @@ pub fn calculate_fit(
     projection: &Projection,
     camera: &Camera,
 ) -> Option<(f32, Vec3)> {
+    let clamped_margin = if margin.is_nan() {
+        MIN_MARGIN
+    } else {
+        margin.clamp(MIN_MARGIN, MAX_MARGIN)
+    };
+    if clamped_margin != margin {
+        warn!(
+            "calculate_fit: clamped margin from {margin} to {clamped_margin} (expected [{MIN_MARGIN}, {MAX_MARGIN}])"
+        );
+    }
+
     let aspect_ratio = projection_aspect_ratio(projection, camera.logical_viewport_size())?;
 
     // For ortho, the camera is always at a fixed distance from focus.
@@ -99,7 +112,7 @@ pub fn calculate_fit(
     };
 
     let is_ortho = ortho_fixed_distance.is_some();
-    let zoom_multiplier = zoom_margin_multiplier(margin);
+    let zoom_multiplier = zoom_margin_multiplier(clamped_margin);
 
     let rot = Quat::from_euler(EulerRot::YXZ, yaw, -pitch, 0.0);
 
