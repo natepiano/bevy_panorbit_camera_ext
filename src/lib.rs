@@ -39,6 +39,7 @@ pub use events::ZoomToFit;
 // Public API - Fit types
 pub use fit::Edge;
 use observers::on_animate_to_fit;
+use observers::on_camera_move_list_added;
 use observers::on_play_animation;
 use observers::on_set_fit_target;
 use observers::on_zoom_to_fit;
@@ -60,6 +61,7 @@ impl Plugin for PanOrbitCameraExtPlugin {
     fn build(&self, app: &mut App) {
         app
             // Register observers for component lifecycle events
+            .add_observer(on_camera_move_list_added)
             .add_observer(restore_smoothness_on_move_end)
             // Register observers for custom events
             .add_observer(on_zoom_to_fit)

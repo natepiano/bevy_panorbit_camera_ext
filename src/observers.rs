@@ -22,6 +22,27 @@ use crate::events::ZoomToFit;
 use crate::fit::calculate_fit;
 use crate::support::extract_mesh_vertices;
 
+/// Ensures camera smoothness is stashed once and disabled while animations are active.
+fn ensure_animation_smoothness(
+    commands: &mut Commands,
+    entity: Entity,
+    camera: &mut PanOrbitCamera,
+    has_existing_stash: bool,
+) {
+    if !has_existing_stash {
+        let stash = SmoothnessStash {
+            zoom: camera.zoom_smoothness,
+            pan: camera.pan_smoothness,
+            orbit: camera.orbit_smoothness,
+        };
+        commands.entity(entity).insert(stash);
+    }
+
+    camera.zoom_smoothness = 0.0;
+    camera.pan_smoothness = 0.0;
+    camera.orbit_smoothness = 0.0;
+}
+
 /// Observer for `ZoomToFit` event - frames a target entity in the camera view.
 /// When duration is `Duration::ZERO`, snaps instantly.
 /// When duration is greater than zero, animates smoothly.
@@ -133,12 +154,12 @@ pub fn on_zoom_to_fit(
 pub fn on_play_animation(
     start: On<PlayAnimation>,
     mut commands: Commands,
-    mut camera_query: Query<&mut PanOrbitCamera>,
+    mut camera_query: Query<(&mut PanOrbitCamera, Option<&SmoothnessStash>)>,
     marker_query: Query<(), With<ZoomAnimationMarker>>,
 ) {
     let entity = start.camera_entity;
 
-    let Ok(mut camera) = camera_query.get_mut(entity) else {
+    let Ok((mut camera, existing_stash)) = camera_query.get_mut(entity) else {
         return;
     };
 
@@ -149,21 +170,37 @@ pub fn on_play_animation(
         });
     }
 
-    // Stash and disable smoothness for precise animation control
-    let stash = SmoothnessStash {
-        zoom: camera.zoom_smoothness,
-        pan: camera.pan_smoothness,
-        orbit: camera.orbit_smoothness,
-    };
-    camera.zoom_smoothness = 0.0;
-    camera.pan_smoothness = 0.0;
-    camera.orbit_smoothness = 0.0;
-    commands.entity(entity).insert(stash);
+    ensure_animation_smoothness(
+        &mut commands,
+        entity,
+        &mut camera,
+        existing_stash.is_some(),
+    );
 
     // Add the animation component
     commands
         .entity(entity)
         .insert(CameraMoveList::new(start.moves.clone()));
+}
+
+/// Observer for direct `CameraMoveList` insertion (bypassing `PlayAnimation`).
+/// Reuses the same smoothness behavior as the event-driven path.
+pub fn on_camera_move_list_added(
+    add: On<Add, CameraMoveList>,
+    mut commands: Commands,
+    mut camera_query: Query<(&mut PanOrbitCamera, Option<&SmoothnessStash>)>,
+) {
+    let entity = add.entity;
+    let Ok((mut camera, existing_stash)) = camera_query.get_mut(entity) else {
+        return;
+    };
+
+    ensure_animation_smoothness(
+        &mut commands,
+        entity,
+        &mut camera,
+        existing_stash.is_some(),
+    );
 }
 
 /// Observer for `SetFitTarget` event - sets the target entity for fit visualization
