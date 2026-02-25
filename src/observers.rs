@@ -1,6 +1,7 @@
 //! Observers that wire events to camera behavior.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
@@ -12,6 +13,7 @@ use crate::components::SmoothnessStash;
 use crate::components::ZoomAnimationMarker;
 use crate::events::AnimateToFit;
 use crate::events::AnimationBegin;
+use crate::events::AnimationEnd;
 use crate::events::PlayAnimation;
 use crate::events::SetFitTarget;
 use crate::events::ZoomBegin;
@@ -21,8 +23,8 @@ use crate::fit::calculate_fit;
 use crate::support::extract_mesh_vertices;
 
 /// Observer for `ZoomToFit` event - frames a target entity in the camera view.
-/// When `duration_ms > 0.0`, animates smoothly over that duration.
-/// When `duration_ms <= 0.0`, snaps instantly.
+/// When duration is `Duration::ZERO`, snaps instantly.
+/// When duration is greater than zero, animates smoothly.
 /// Requires target entity to have a `Mesh3d` (direct or on descendants).
 pub fn on_zoom_to_fit(
     zoom: On<ZoomToFit>,
@@ -36,7 +38,7 @@ pub fn on_zoom_to_fit(
     let camera_entity = zoom.camera_entity;
     let target_entity = zoom.target;
     let margin = zoom.margin;
-    let duration_ms = zoom.duration_ms;
+    let duration = zoom.duration;
     let easing = zoom.easing;
 
     let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
@@ -44,8 +46,12 @@ pub fn on_zoom_to_fit(
     };
 
     debug!(
-        "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={duration_ms:.0}",
-        camera.target_yaw, camera.target_pitch, camera.target_focus, camera.target_radius
+        "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={:.0}",
+        camera.target_yaw,
+        camera.target_pitch,
+        camera.target_focus,
+        camera.target_radius,
+        duration.as_secs_f32() * 1000.0,
     );
 
     let Some((vertices, geometric_center)) = extract_mesh_vertices(
@@ -76,11 +82,11 @@ pub fn on_zoom_to_fit(
         camera_entity,
         target_entity,
         margin,
-        duration_ms,
+        duration,
         easing,
     });
 
-    if duration_ms > 0.0 {
+    if duration > Duration::ZERO {
         // Animated path: use `ToOrbit` to pass orbital params directly, avoiding
         // gimbal lock from atan2 decomposition at extreme pitch angles.
         let moves = VecDeque::from([CameraMove::ToOrbit {
@@ -88,7 +94,7 @@ pub fn on_zoom_to_fit(
             yaw: camera.target_yaw,
             pitch: camera.target_pitch,
             radius: target_radius,
-            duration_ms,
+            duration,
             easing,
         }]);
 
@@ -96,13 +102,15 @@ pub fn on_zoom_to_fit(
         commands.entity(camera_entity).insert(ZoomAnimationMarker {
             target_entity,
             margin,
-            duration_ms,
+            duration,
             easing,
         });
 
         commands.trigger(PlayAnimation::new(camera_entity, moves));
     } else {
         // Instant path: snap directly to target
+        camera.focus = target_focus;
+        camera.radius = Some(target_radius);
         camera.target_focus = target_focus;
         camera.target_radius = target_radius;
         camera.force_update = true;
@@ -110,7 +118,7 @@ pub fn on_zoom_to_fit(
             camera_entity,
             target_entity,
             margin,
-            duration_ms,
+            duration: Duration::ZERO,
             easing,
         });
     }
@@ -143,8 +151,8 @@ pub fn on_play_animation(
 
     // Stash and disable smoothness for precise animation control
     let stash = SmoothnessStash {
-        zoom:  camera.zoom_smoothness,
-        pan:   camera.pan_smoothness,
+        zoom: camera.zoom_smoothness,
+        pan: camera.pan_smoothness,
         orbit: camera.orbit_smoothness,
     };
     camera.zoom_smoothness = 0.0;
@@ -170,7 +178,7 @@ pub fn on_set_fit_target(set_target: On<SetFitTarget>, mut commands: Commands) {
 pub fn on_animate_to_fit(
     event: On<AnimateToFit>,
     mut commands: Commands,
-    camera_query: Query<(&PanOrbitCamera, &Projection, &Camera)>,
+    mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera)>,
     mesh_query: Query<&Mesh3d>,
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
@@ -181,10 +189,10 @@ pub fn on_animate_to_fit(
     let yaw = event.yaw;
     let pitch = event.pitch;
     let margin = event.margin;
-    let duration_ms = event.duration_ms;
+    let duration = event.duration;
     let easing = event.easing;
 
-    let Ok((_, projection, cam)) = camera_query.get(camera_entity) else {
+    let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
         return;
     };
 
@@ -212,16 +220,29 @@ pub fn on_animate_to_fit(
         return;
     };
 
-    let moves = VecDeque::from([CameraMove::ToOrbit {
-        focus: target_focus,
-        yaw,
-        pitch,
-        radius: target_radius,
-        duration_ms,
-        easing,
-    }]);
-
-    commands.trigger(PlayAnimation::new(camera_entity, moves));
+    if duration > Duration::ZERO {
+        let moves = VecDeque::from([CameraMove::ToOrbit {
+            focus: target_focus,
+            yaw,
+            pitch,
+            radius: target_radius,
+            duration,
+            easing,
+        }]);
+        commands.trigger(PlayAnimation::new(camera_entity, moves));
+    } else {
+        camera.focus = target_focus;
+        camera.yaw = Some(yaw);
+        camera.pitch = Some(pitch);
+        camera.radius = Some(target_radius);
+        camera.target_focus = target_focus;
+        camera.target_radius = target_radius;
+        camera.target_yaw = yaw;
+        camera.target_pitch = pitch;
+        camera.force_update = true;
+        commands.trigger(AnimationBegin { camera_entity });
+        commands.trigger(AnimationEnd { camera_entity });
+    }
     commands
         .entity(camera_entity)
         .insert(CurrentFitTarget(target_entity));

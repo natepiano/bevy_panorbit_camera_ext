@@ -2,16 +2,20 @@
 //! Allows for simple animation of camera movements with easing functions.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use bevy::math::curve::Curve;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
+use crate::components::InterruptBehavior;
 use crate::components::ZoomAnimationMarker;
+use crate::events::AnimationCancelled;
 use crate::events::AnimationEnd;
 use crate::events::CameraMoveBegin;
 use crate::events::CameraMoveEnd;
+use crate::events::ZoomCancelled;
 use crate::events::ZoomEnd;
 
 /// Individual camera movement with target position and duration.
@@ -25,30 +29,32 @@ pub enum CameraMove {
     /// The animation system decomposes this into orbital parameters internally.
     ToPosition {
         translation: Vec3,
-        focus:       Vec3,
-        duration_ms: f32,
-        easing:      EaseFunction,
+        focus: Vec3,
+        duration: Duration,
+        easing: EaseFunction,
     },
     /// Animate to orbital parameters around a focus point.
     /// Avoids gimbal lock at extreme pitch angles (±PI/2) where world-space
     /// decomposition via `atan2` loses yaw information.
     ToOrbit {
-        focus:       Vec3,
-        yaw:         f32,
-        pitch:       f32,
-        radius:      f32,
-        duration_ms: f32,
-        easing:      EaseFunction,
+        focus: Vec3,
+        yaw: f32,
+        pitch: f32,
+        radius: f32,
+        duration: Duration,
+        easing: EaseFunction,
     },
 }
 
 impl CameraMove {
-    pub const fn duration_ms(&self) -> f32 {
+    pub const fn duration(&self) -> Duration {
         match self {
-            Self::ToPosition { duration_ms, .. } | Self::ToOrbit { duration_ms, .. } => {
-                *duration_ms
-            },
+            Self::ToPosition { duration, .. } | Self::ToOrbit { duration, .. } => *duration,
         }
+    }
+
+    pub fn duration_ms(&self) -> f32 {
+        self.duration().as_secs_f32() * 1000.0
     }
 
     pub const fn easing(&self) -> EaseFunction {
@@ -112,20 +118,47 @@ const EXTERNAL_INPUT_TOLERANCE: f32 = 1e-6;
 #[derive(Clone, Reflect, Default, Debug)]
 enum MoveState {
     InProgress {
-        elapsed_ms:      f32,
-        start_focus:     Vec3,
-        start_pitch:     f32,
-        start_radius:    f32,
-        start_yaw:       f32,
+        elapsed_ms: f32,
+        start_focus: Vec3,
+        start_pitch: f32,
+        start_radius: f32,
+        start_yaw: f32,
         /// Values written by the animation last frame — if the camera's current
         /// values differ, external input occurred and the animation should cancel.
-        last_written_focus:  Vec3,
-        last_written_yaw:    f32,
-        last_written_pitch:  f32,
+        last_written_focus: Vec3,
+        last_written_yaw: f32,
+        last_written_pitch: f32,
         last_written_radius: f32,
     },
     #[default]
     Ready,
+}
+
+impl MoveState {
+    /// Returns `true` if the camera's orbital parameters have been modified by
+    /// something other than the animation system since the last frame.
+    fn externally_modified(&self, camera: &PanOrbitCamera) -> bool {
+        match self {
+            Self::InProgress {
+                last_written_focus,
+                last_written_yaw,
+                last_written_pitch,
+                last_written_radius,
+                ..
+            } => {
+                let focus_changed =
+                    last_written_focus.distance(camera.target_focus) > EXTERNAL_INPUT_TOLERANCE;
+                let yaw_changed =
+                    (last_written_yaw - camera.target_yaw).abs() > EXTERNAL_INPUT_TOLERANCE;
+                let pitch_changed =
+                    (last_written_pitch - camera.target_pitch).abs() > EXTERNAL_INPUT_TOLERANCE;
+                let radius_changed =
+                    (last_written_radius - camera.target_radius).abs() > EXTERNAL_INPUT_TOLERANCE;
+                focus_changed || yaw_changed || pitch_changed || radius_changed
+            },
+            Self::Ready => false,
+        }
+    }
 }
 
 /// Component that queues multiple camera movements to execute sequentially
@@ -137,10 +170,11 @@ enum MoveState {
 /// Camera smoothing is automatically disabled while moves are in progress and
 /// restored when the queue completes via the `SmoothnessStash` observer.
 #[derive(Component, Reflect, Default)]
+#[require(crate::components::InterruptBehavior)]
 #[reflect(Component, Default)]
 pub struct CameraMoveList {
     pub moves: VecDeque<CameraMove>,
-    state:     MoveState,
+    state: MoveState,
 }
 
 impl CameraMoveList {
@@ -184,10 +218,11 @@ pub fn process_camera_move_list(
         Entity,
         &mut PanOrbitCamera,
         &mut CameraMoveList,
+        &InterruptBehavior,
         Option<&ZoomAnimationMarker>,
     )>,
 ) {
-    for (entity, mut pan_orbit, mut queue, zoom_marker) in &mut camera_query {
+    for (entity, mut pan_orbit, mut queue, interrupt_behavior, zoom_marker) in &mut camera_query {
         // Get the current move from the front of the queue (clone to avoid borrow issues)
         let Some(current_move) = queue.moves.front().cloned() else {
             // Remove components BEFORE triggering events — observers may re-insert
@@ -199,9 +234,9 @@ pub fn process_camera_move_list(
                 commands.trigger(ZoomEnd {
                     camera_entity: entity,
                     target_entity: marker.target_entity,
-                    margin:        marker.margin,
-                    duration_ms:   marker.duration_ms,
-                    easing:        marker.easing,
+                    margin: marker.margin,
+                    duration: marker.duration,
+                    easing: marker.easing,
                 });
             } else {
                 commands.trigger(AnimationEnd {
@@ -211,21 +246,99 @@ pub fn process_camera_move_list(
             continue;
         };
 
+        // Check for external camera input interrupting the animation
+        if queue.state.externally_modified(&pan_orbit) {
+            match interrupt_behavior {
+                InterruptBehavior::Cancel => {
+                    // Stop where we are — fire cancelled events
+                    commands.entity(entity).remove::<CameraMoveList>();
+                    if let Some(marker) = zoom_marker {
+                        commands.entity(entity).remove::<ZoomAnimationMarker>();
+                        commands.trigger(ZoomCancelled {
+                            camera_entity: entity,
+                            target_entity: marker.target_entity,
+                        });
+                    } else {
+                        commands.trigger(AnimationCancelled {
+                            camera_entity: entity,
+                        });
+                    }
+                },
+                InterruptBehavior::Complete => {
+                    // Jump to the final position of the entire queue
+                    if let Some(final_move) = queue.moves.back() {
+                        let (yaw, pitch, radius) = final_move.orbital_params();
+                        pan_orbit.target_focus = final_move.focus();
+                        pan_orbit.target_yaw = yaw;
+                        pan_orbit.target_pitch = pitch;
+                        pan_orbit.target_radius = radius;
+                        pan_orbit.force_update = true;
+                    }
+                    // Fire normal end events
+                    commands.entity(entity).remove::<CameraMoveList>();
+                    if let Some(marker) = zoom_marker {
+                        commands.entity(entity).remove::<ZoomAnimationMarker>();
+                        commands.trigger(ZoomEnd {
+                            camera_entity: entity,
+                            target_entity: marker.target_entity,
+                            margin: marker.margin,
+                            duration: marker.duration,
+                            easing: marker.easing,
+                        });
+                    } else {
+                        commands.trigger(AnimationEnd {
+                            camera_entity: entity,
+                        });
+                    }
+                },
+            }
+            continue;
+        }
+
         match &mut queue.state {
             MoveState::Ready => {
+                if current_move.duration().is_zero() {
+                    if zoom_marker.is_none() {
+                        commands.trigger(CameraMoveBegin {
+                            camera_entity: entity,
+                            camera_move: current_move.clone(),
+                        });
+                    }
+
+                    let (target_yaw, target_pitch, target_radius) = current_move.orbital_params();
+                    pan_orbit.target_focus = current_move.focus();
+                    pan_orbit.target_radius = target_radius;
+                    pan_orbit.target_yaw = target_yaw;
+                    pan_orbit.target_pitch = target_pitch;
+                    pan_orbit.force_update = true;
+
+                    if zoom_marker.is_none() {
+                        commands.trigger(CameraMoveEnd {
+                            camera_entity: entity,
+                            camera_move: current_move,
+                        });
+                    }
+                    queue.moves.pop_front();
+                    continue;
+                }
+
                 // Transition to InProgress with captured starting orbital parameters
                 queue.state = MoveState::InProgress {
-                    elapsed_ms:   0.0,
-                    start_focus:  pan_orbit.target_focus,
+                    elapsed_ms: 0.0,
+                    start_focus: pan_orbit.target_focus,
                     start_radius: pan_orbit.target_radius,
-                    start_yaw:    pan_orbit.target_yaw,
-                    start_pitch:  pan_orbit.target_pitch,
+                    start_yaw: pan_orbit.target_yaw,
+                    start_pitch: pan_orbit.target_pitch,
+                    last_written_focus: pan_orbit.target_focus,
+                    last_written_yaw: pan_orbit.target_yaw,
+                    last_written_pitch: pan_orbit.target_pitch,
+                    last_written_radius: pan_orbit.target_radius,
                 };
 
                 if zoom_marker.is_none() {
                     commands.trigger(CameraMoveBegin {
                         camera_entity: entity,
-                        camera_move:   current_move.clone(),
+                        camera_move: current_move.clone(),
                     });
                 }
             },
@@ -235,12 +348,21 @@ pub fn process_camera_move_list(
                 start_radius,
                 start_yaw,
                 start_pitch,
+                last_written_focus,
+                last_written_yaw,
+                last_written_pitch,
+                last_written_radius,
             } => {
                 // Update elapsed time
                 *elapsed_ms += time.delta_secs() * 1000.0;
 
                 // Calculate interpolation factor (0.0 to 1.0)
-                let t = (*elapsed_ms / current_move.duration_ms()).min(1.0);
+                let duration_ms = current_move.duration_ms();
+                let t = if duration_ms <= 0.0 {
+                    1.0
+                } else {
+                    (*elapsed_ms / duration_ms).min(1.0)
+                };
 
                 let is_final_frame = t >= 1.0;
 
@@ -279,12 +401,18 @@ pub fn process_camera_move_list(
                 pan_orbit.target_pitch = pitch_diff.mul_add(t_interp, *start_pitch);
                 pan_orbit.force_update = true;
 
+                // Save what we wrote so we can detect external changes next frame
+                *last_written_focus = pan_orbit.target_focus;
+                *last_written_yaw = pan_orbit.target_yaw;
+                *last_written_pitch = pan_orbit.target_pitch;
+                *last_written_radius = pan_orbit.target_radius;
+
                 // Check if move complete and advance to next
                 if is_final_frame {
                     if zoom_marker.is_none() {
                         commands.trigger(CameraMoveEnd {
                             camera_entity: entity,
-                            camera_move:   current_move.clone(),
+                            camera_move: current_move.clone(),
                         });
                     }
                     queue.moves.pop_front();

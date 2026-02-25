@@ -20,17 +20,20 @@ pub use animation::CameraMoveList;
 use animation::process_camera_move_list;
 // Public API - Components
 pub use components::CurrentFitTarget;
+pub use components::InterruptBehavior;
 pub use components::SmoothnessStash;
 pub use components::ZoomAnimationMarker;
 // Public API - Events
 pub use events::AnimateToFit;
 pub use events::AnimationBegin;
+pub use events::AnimationCancelled;
 pub use events::AnimationEnd;
 pub use events::CameraMoveBegin;
 pub use events::CameraMoveEnd;
 pub use events::PlayAnimation;
 pub use events::SetFitTarget;
 pub use events::ZoomBegin;
+pub use events::ZoomCancelled;
 pub use events::ZoomEnd;
 pub use events::ZoomToFit;
 // Public API - Fit types

@@ -1,7 +1,28 @@
 //! Components used by the camera extension system.
 
+use std::time::Duration;
+
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
+
+/// Configures what happens when external camera input interrupts an animation.
+///
+/// This is a required component on [`CameraMoveList`](crate::CameraMoveList) — if not
+/// explicitly inserted, it defaults to [`Cancel`](InterruptBehavior::Cancel).
+///
+/// - [`Cancel`](InterruptBehavior::Cancel) — stop the camera where it is and fire `*Cancelled`
+///   events
+/// - [`Complete`](InterruptBehavior::Complete) — jump to the final position of the entire queue and
+///   fire normal `*End` events
+#[derive(Component, Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub enum InterruptBehavior {
+    /// Stop the camera at its current position. Fires `AnimationCancelled` or `ZoomCancelled`.
+    #[default]
+    Cancel,
+    /// Jump to the final queued position. Fires `AnimationEnd` or `ZoomEnd`.
+    Complete,
+}
 
 /// Marks the entity that the camera is currently fitted to.
 /// Persists after fit completes to enable persistent visualization.
@@ -15,9 +36,9 @@ pub struct CurrentFitTarget(pub Entity);
 #[derive(Component)]
 pub struct ZoomAnimationMarker {
     pub target_entity: Entity,
-    pub margin:        f32,
-    pub duration_ms:   f32,
-    pub easing:        EaseFunction,
+    pub margin: f32,
+    pub duration: Duration,
+    pub easing: EaseFunction,
 }
 
 /// Component that stores camera smoothness values during animations.
@@ -28,7 +49,7 @@ pub struct ZoomAnimationMarker {
 /// automatically restored via an observer.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SmoothnessStash {
-    pub zoom:  f32,
-    pub pan:   f32,
+    pub zoom: f32,
+    pub pan: f32,
     pub orbit: f32,
 }

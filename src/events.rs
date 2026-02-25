@@ -1,6 +1,7 @@
 //! Events for camera animations and zoom operations.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
@@ -27,6 +28,15 @@ pub struct AnimationEnd {
     pub camera_entity: Entity,
 }
 
+/// Fired when a `PlayAnimation` or `AnimateToFit` is cancelled by external camera input.
+/// The camera stays at its current position — no snap to final.
+#[derive(EntityEvent, Reflect)]
+#[reflect(Event, FromReflect)]
+pub struct AnimationCancelled {
+    #[event_target]
+    pub camera_entity: Entity,
+}
+
 // ============================================================================
 // Camera move lifecycle (per-move)
 // ============================================================================
@@ -37,7 +47,7 @@ pub struct AnimationEnd {
 pub struct CameraMoveBegin {
     #[event_target]
     pub camera_entity: Entity,
-    pub camera_move:   CameraMove,
+    pub camera_move: CameraMove,
 }
 
 /// Fired when an individual `CameraMove` completes.
@@ -46,7 +56,7 @@ pub struct CameraMoveBegin {
 pub struct CameraMoveEnd {
     #[event_target]
     pub camera_entity: Entity,
-    pub camera_move:   CameraMove,
+    pub camera_move: CameraMove,
 }
 
 // ============================================================================
@@ -60,9 +70,9 @@ pub struct ZoomBegin {
     #[event_target]
     pub camera_entity: Entity,
     pub target_entity: Entity,
-    pub margin:        f32,
-    pub duration_ms:   f32,
-    pub easing:        EaseFunction,
+    pub margin: f32,
+    pub duration: Duration,
+    pub easing: EaseFunction,
 }
 
 /// Fired when a `ZoomToFit` operation completes (both animated and instant).
@@ -72,9 +82,19 @@ pub struct ZoomEnd {
     #[event_target]
     pub camera_entity: Entity,
     pub target_entity: Entity,
-    pub margin:        f32,
-    pub duration_ms:   f32,
-    pub easing:        EaseFunction,
+    pub margin: f32,
+    pub duration: Duration,
+    pub easing: EaseFunction,
+}
+
+/// Fired when a `ZoomToFit` animation is cancelled by external camera input.
+/// The camera stays at its current position — no snap to final.
+#[derive(EntityEvent, Reflect)]
+#[reflect(Event, FromReflect)]
+pub struct ZoomCancelled {
+    #[event_target]
+    pub camera_entity: Entity,
+    pub target_entity: Entity,
 }
 
 // ============================================================================
@@ -82,7 +102,8 @@ pub struct ZoomEnd {
 // ============================================================================
 
 /// Event to frame a target entity in the camera view.
-/// Use `duration_ms > 0.0` for a smooth animated zoom, or `0.0` for an instant snap.
+/// Use `Duration::ZERO` for an instant snap, or `Duration > Duration::ZERO` for a
+/// smooth animated zoom.
 ///
 /// The `margin` is the **total** fraction of screen reserved for padding — it is split
 /// equally across both sides of the constraining dimension. For example, a margin of
@@ -93,10 +114,10 @@ pub struct ZoomEnd {
 pub struct ZoomToFit {
     #[event_target]
     pub camera_entity: Entity,
-    pub target:        Entity,
-    pub margin:        f32,
-    pub duration_ms:   f32,
-    pub easing:        EaseFunction,
+    pub target: Entity,
+    pub margin: f32,
+    pub duration: Duration,
+    pub easing: EaseFunction,
 }
 
 impl ZoomToFit {
@@ -104,14 +125,14 @@ impl ZoomToFit {
         camera_entity: Entity,
         target: Entity,
         margin: f32,
-        duration_ms: f32,
+        duration: Duration,
         easing: EaseFunction,
     ) -> Self {
         Self {
             camera_entity,
             target,
             margin,
-            duration_ms,
+            duration,
             easing,
         }
     }
@@ -123,7 +144,7 @@ impl ZoomToFit {
 pub struct PlayAnimation {
     #[event_target]
     pub camera_entity: Entity,
-    pub moves:         VecDeque<CameraMove>,
+    pub moves: VecDeque<CameraMove>,
 }
 
 impl PlayAnimation {
@@ -143,7 +164,7 @@ impl PlayAnimation {
 pub struct SetFitTarget {
     #[event_target]
     pub camera_entity: Entity,
-    pub target:        Entity,
+    pub target: Entity,
 }
 
 impl SetFitTarget {
@@ -169,12 +190,12 @@ impl SetFitTarget {
 pub struct AnimateToFit {
     #[event_target]
     pub camera_entity: Entity,
-    pub target:        Entity,
-    pub yaw:           f32,
-    pub pitch:         f32,
-    pub margin:        f32,
-    pub duration_ms:   f32,
-    pub easing:        EaseFunction,
+    pub target: Entity,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub margin: f32,
+    pub duration: Duration,
+    pub easing: EaseFunction,
 }
 
 impl AnimateToFit {
@@ -184,7 +205,7 @@ impl AnimateToFit {
         yaw: f32,
         pitch: f32,
         margin: f32,
-        duration_ms: f32,
+        duration: Duration,
         easing: EaseFunction,
     ) -> Self {
         Self {
@@ -193,7 +214,7 @@ impl AnimateToFit {
             yaw,
             pitch,
             margin,
-            duration_ms,
+            duration,
             easing,
         }
     }

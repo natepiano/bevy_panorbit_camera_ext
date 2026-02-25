@@ -9,9 +9,9 @@ use bevy::prelude::*;
 /// Camera basis vectors extracted from a `GlobalTransform`.
 /// Bundles the position and orientation vectors that are frequently passed together.
 pub struct CameraBasis {
-    pub pos:     Vec3,
-    pub right:   Vec3,
-    pub up:      Vec3,
+    pub pos: Vec3,
+    pub right: Vec3,
+    pub up: Vec3,
     pub forward: Vec3,
 }
 
@@ -19,9 +19,9 @@ impl CameraBasis {
     pub fn from_global_transform(global: &GlobalTransform) -> Self {
         let rot = global.rotation();
         Self {
-            pos:     global.translation(),
-            right:   rot * Vec3::X,
-            up:      rot * Vec3::Y,
+            pos: global.translation(),
+            right: rot * Vec3::X,
+            up: rot * Vec3::Y,
             forward: rot * Vec3::NEG_Z,
         }
     }
@@ -43,7 +43,7 @@ pub struct ProjectionParams {
     /// Half visible extent in y (perspective: half_tan_vfov, ortho: area.height()/2)
     pub half_extent_y: f32,
     /// Whether this uses orthographic projection
-    pub is_ortho:      bool,
+    pub is_ortho: bool,
 }
 
 impl ProjectionParams {
@@ -122,13 +122,15 @@ pub struct PointDepths {
     pub max_x_depth: f32,
     pub min_y_depth: f32,
     pub max_y_depth: f32,
-    pub depth_sum:   f32,
+    pub depth_sum: f32,
     pub point_count: usize,
 }
 
 impl PointDepths {
     /// Average depth across all projected points.
-    pub fn avg_depth(&self) -> f32 { self.depth_sum / self.point_count as f32 }
+    pub fn avg_depth(&self) -> f32 {
+        self.depth_sum / self.point_count as f32
+    }
 }
 
 /// Screen-space bounds of a set of projected points, with margin distances
@@ -136,21 +138,21 @@ impl PointDepths {
 #[derive(Debug, Clone)]
 pub struct ScreenSpaceBounds {
     /// Distance from left edge (positive = inside, negative = outside)
-    pub left_margin:   f32,
+    pub left_margin: f32,
     /// Distance from right edge (positive = inside, negative = outside)
-    pub right_margin:  f32,
+    pub right_margin: f32,
     /// Distance from top edge (positive = inside, negative = outside)
-    pub top_margin:    f32,
+    pub top_margin: f32,
     /// Distance from bottom edge (positive = inside, negative = outside)
     pub bottom_margin: f32,
     /// Minimum normalized x coordinate in screen space
-    pub min_norm_x:    f32,
+    pub min_norm_x: f32,
     /// Maximum normalized x coordinate in screen space
-    pub max_norm_x:    f32,
+    pub max_norm_x: f32,
     /// Minimum normalized y coordinate in screen space
-    pub min_norm_y:    f32,
+    pub min_norm_y: f32,
     /// Maximum normalized y coordinate in screen space
-    pub max_norm_y:    f32,
+    pub max_norm_y: f32,
     /// Half visible extent in x (perspective: half_tan_hfov, ortho: area.width()/2)
     pub half_extent_x: f32,
     /// Half visible extent in y (perspective: half_tan_vfov, ortho: area.height()/2)

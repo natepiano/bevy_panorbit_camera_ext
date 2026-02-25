@@ -41,8 +41,18 @@ Both events fit a target entity in the camera view, but they differ in how they 
 - **`AnimateToFit`** - Fits the target from a **specified** orientation. The camera animates to the given yaw and pitch while simultaneously fitting the target. Use this when you need to move the camera to a specific viewing angle, such as returning to a home position.
 
 ```rust
+use std::time::Duration;
+
+use bevy::math::curve::easing::EaseFunction;
+
 // Zoom to fit at current orientation (e.g., user presses "Z" to frame selection)
-commands.trigger(ZoomToFit::new(camera_entity, target_entity, DEFAULT_MARGIN, 500.0));
+commands.trigger(ZoomToFit::new(
+    camera_entity,
+    target_entity,
+    DEFAULT_MARGIN,
+    Duration::from_millis(500),
+    EaseFunction::CubicOut,
+));
 
 // Animate to a specific orientation and fit (e.g., "home" button returns to front view)
 commands.trigger(AnimateToFit::new(
@@ -51,7 +61,7 @@ commands.trigger(AnimateToFit::new(
     0.0,   // yaw
     0.0,   // pitch
     DEFAULT_MARGIN,
-    1200.0,
+    Duration::from_millis(1200),
     EaseFunction::QuadraticOut,
 ));
 ```
@@ -61,11 +71,13 @@ commands.trigger(AnimateToFit::new(
 Queue one or more camera moves for sequential playback with easing functions. Useful for cinematic sequences or splash screen animations.
 
 ```rust
+use std::time::Duration;
+
 let moves = VecDeque::from([
     CameraMove::ToPosition {
         translation: Vec3::new(0.0, 5.0, 20.0),
         focus:       Vec3::ZERO,
-        duration_ms: 2000.0,
+        duration:    Duration::from_secs(2),
         easing:      EaseFunction::QuadraticInOut,
     },
 ]);
@@ -81,11 +93,21 @@ commands.trigger(PlayAnimation::new(camera_entity, moves));
 Sets the debug visualization target entity on a camera without triggering any zoom or animation. This lets you inspect the debug gizmos (bounding box, margins, screen-space bounds) for an entity before deciding to invoke one of the zoom/animation behaviors.
 
 ```rust
+use std::time::Duration;
+
+use bevy::math::curve::easing::EaseFunction;
+
 // Preview what the debug visualization looks like for this entity
 commands.trigger(SetFitTarget::new(camera_entity, target_entity));
 
 // Later, when ready, trigger the actual zoom
-commands.trigger(ZoomToFit::new(camera_entity, target_entity, DEFAULT_MARGIN, 500.0));
+commands.trigger(ZoomToFit::new(
+    camera_entity,
+    target_entity,
+    DEFAULT_MARGIN,
+    Duration::from_millis(500),
+    EaseFunction::CubicOut,
+));
 ```
 
 ### Lifecycle Events

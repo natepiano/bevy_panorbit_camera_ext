@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::f32::consts::PI;
+use std::time::Duration;
 
 use bevy::camera::ScalingMode;
 use bevy::color::palettes::basic::SILVER;
@@ -23,15 +24,18 @@ use bevy_panorbit_camera::PanOrbitCameraPlugin;
 use bevy_panorbit_camera::TrackpadBehavior;
 use bevy_panorbit_camera_ext::AnimateToFit;
 use bevy_panorbit_camera_ext::AnimationBegin;
+use bevy_panorbit_camera_ext::AnimationCancelled;
 use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
 use bevy_panorbit_camera_ext::FitTargetGizmo;
 use bevy_panorbit_camera_ext::FitTargetVisualizationPlugin;
+use bevy_panorbit_camera_ext::InterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::ZoomBegin;
+use bevy_panorbit_camera_ext::ZoomCancelled;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
 
@@ -104,15 +108,18 @@ fn main() {
                 randomize_easing,
                 animate_camera,
                 animate_fit_to_scene,
+                toggle_interrupt_behavior,
                 update_event_log_text,
             ),
         )
         .add_observer(log_animation_start)
         .add_observer(log_animation_begin)
+        .add_observer(log_animation_cancelled)
         .add_observer(log_camera_move_start)
         .add_observer(log_camera_move_end)
         .add_observer(log_zoom_begin)
         .add_observer(log_zoom_end)
+        .add_observer(log_zoom_cancelled)
         .run();
 }
 
@@ -122,8 +129,11 @@ struct Selected;
 #[derive(Component)]
 struct EventLogNode;
 
+#[derive(Component)]
+struct InterruptBehaviorHint;
+
 struct EventLine {
-    text:      String,
+    text: String,
     timestamp: f32,
 }
 
@@ -131,7 +141,9 @@ struct EventLine {
 struct ActiveEasing(EaseFunction);
 
 impl Default for ActiveEasing {
-    fn default() -> Self { Self(EaseFunction::CubicOut) }
+    fn default() -> Self {
+        Self(EaseFunction::CubicOut)
+    }
 }
 
 const ALL_EASINGS: &[EaseFunction] = &[
@@ -192,9 +204,9 @@ enum MeshShape {
 
 #[derive(Resource)]
 struct SceneEntities {
-    camera:       Entity,
+    camera: Entity,
     scene_bounds: Entity,
-    light:        Entity,
+    light: Entity,
 }
 
 fn setup(
@@ -298,7 +310,7 @@ fn setup(
             button_pan: MouseButton::Middle,
             modifier_pan: Some(KeyCode::ShiftLeft),
             trackpad_behavior: TrackpadBehavior::BlenderLike {
-                modifier_pan:  Some(KeyCode::ShiftLeft),
+                modifier_pan: Some(KeyCode::ShiftLeft),
                 modifier_zoom: Some(KeyCode::ControlLeft),
             },
             trackpad_pinch_to_zoom_enabled: true,
@@ -310,7 +322,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'C' reset to 'CubicOut' easing"),
+        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'C' reset to 'CubicOut' easing\n'I' toggle interrupt behavior"),
         TextFont {
             font_size: 13.0,
             ..default()
@@ -321,6 +333,23 @@ fn setup(
             left: Val::Px(12.0),
             ..default()
         },
+    ));
+
+    // Interrupt behavior hint (bottom-left)
+    commands.spawn((
+        Text::new(interrupt_behavior_hint_text(InterruptBehavior::Cancel)),
+        TextFont {
+            font_size: 13.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.7, 0.7, 0.7, 0.7)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(12.0),
+            left: Val::Px(12.0),
+            ..default()
+        },
+        InterruptBehaviorHint,
     ));
 
     // Event log display (top-right, grows downward)
@@ -366,7 +395,7 @@ fn initial_fit_to_scene(
         CAMERA_START_YAW,
         CAMERA_START_PITCH,
         ZOOM_MARGIN_SCENE,
-        0.0,
+        Duration::ZERO,
         EaseFunction::QuadraticInOut,
     ));
     next_state.set(AppState::Running);
@@ -389,7 +418,7 @@ fn on_mesh_clicked(
         scene.camera,
         clicked,
         ZOOM_MARGIN_MESH,
-        ZOOM_DURATION_MS,
+        Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0),
         active_easing.0,
     ));
 }
@@ -409,7 +438,7 @@ fn on_ground_clicked(
         scene.camera,
         scene.scene_bounds,
         ZOOM_MARGIN_SCENE,
-        ZOOM_DURATION_MS,
+        Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0),
         active_easing.0,
     ));
 }
@@ -431,7 +460,7 @@ fn on_below_clicked(
         CAMERA_START_YAW,
         CAMERA_START_PITCH,
         ZOOM_MARGIN_SCENE,
-        ANIMATE_FIT_DURATION_MS,
+        Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0),
         active_easing.0,
     ));
 }
@@ -525,7 +554,7 @@ fn animate_camera(
             yaw: yaw + half_pi,
             pitch,
             radius,
-            duration_ms: ORBIT_MOVE_DURATION_MS,
+            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
             easing: e,
         },
         CameraMove::ToOrbit {
@@ -533,7 +562,7 @@ fn animate_camera(
             yaw: yaw + half_pi * 2.0,
             pitch,
             radius,
-            duration_ms: ORBIT_MOVE_DURATION_MS,
+            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
             easing: e,
         },
         CameraMove::ToOrbit {
@@ -541,7 +570,7 @@ fn animate_camera(
             yaw: yaw + half_pi * 3.0,
             pitch,
             radius,
-            duration_ms: ORBIT_MOVE_DURATION_MS,
+            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
             easing: e,
         },
         CameraMove::ToOrbit {
@@ -549,7 +578,7 @@ fn animate_camera(
             yaw: yaw + half_pi * 4.0,
             pitch,
             radius,
-            duration_ms: ORBIT_MOVE_DURATION_MS,
+            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
             easing: e,
         },
     ]);
@@ -590,7 +619,7 @@ fn animate_fit_to_scene(
         CAMERA_START_YAW,
         CAMERA_START_PITCH,
         ZOOM_MARGIN_SCENE,
-        ANIMATE_FIT_DURATION_MS,
+        Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0),
         easing.0,
     ));
 }
@@ -620,7 +649,7 @@ fn toggle_projection(
             CAMERA_START_YAW,
             CAMERA_START_PITCH,
             ZOOM_MARGIN_SCENE,
-            ANIMATE_FIT_DURATION_MS,
+            Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0),
             active_easing.0,
         ));
         return;
@@ -659,6 +688,55 @@ fn toggle_projection(
     *pending_fit = true;
 }
 
+fn interrupt_behavior_hint_text(behavior: InterruptBehavior) -> String {
+    match behavior {
+        InterruptBehavior::Cancel => {
+            "InterruptBehavior::Cancel — camera input during animation will cancel it".into()
+        },
+        InterruptBehavior::Complete => {
+            "InterruptBehavior::Complete — camera input during animation will jump to final position"
+                .into()
+        },
+    }
+}
+
+fn toggle_interrupt_behavior(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    scene: Res<SceneEntities>,
+    mut behavior_query: Query<&mut InterruptBehavior>,
+    mut hint_query: Query<&mut Text, With<InterruptBehaviorHint>>,
+    time: Res<Time>,
+    mut log: ResMut<EventLog>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyI) {
+        return;
+    }
+
+    let Ok(mut behavior) = behavior_query.get_mut(scene.camera) else {
+        // No `InterruptBehavior` on camera yet — insert one (toggled from default)
+        commands
+            .entity(scene.camera)
+            .insert(InterruptBehavior::Complete);
+        for mut text in &mut hint_query {
+            **text = interrupt_behavior_hint_text(InterruptBehavior::Complete);
+        }
+        log.push("InterruptBehavior: Complete".into(), &time);
+        return;
+    };
+
+    let new_behavior = match *behavior {
+        InterruptBehavior::Cancel => InterruptBehavior::Complete,
+        InterruptBehavior::Complete => InterruptBehavior::Cancel,
+    };
+    *behavior = new_behavior;
+
+    for mut text in &mut hint_query {
+        **text = interrupt_behavior_hint_text(new_behavior);
+    }
+    log.push(format!("InterruptBehavior: {new_behavior:?}"), &time);
+}
+
 // ============================================================================
 // Event log
 // ============================================================================
@@ -673,7 +751,9 @@ impl EventLog {
     }
 }
 
-fn fmt_vec3(v: Vec3) -> String { format!("({:.1}, {:.1}, {:.1})", v.x, v.y, v.z) }
+fn fmt_vec3(v: Vec3) -> String {
+    format!("({:.1}, {:.1}, {:.1})", v.x, v.y, v.z)
+}
 
 fn log_animation_start(_event: On<AnimationBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
     log.push("AnimationBegin".into(), &time);
@@ -704,7 +784,9 @@ fn log_zoom_begin(event: On<ZoomBegin>, time: Res<Time>, mut log: ResMut<EventLo
     log.push(
         format!(
             "ZoomBegin\n  margin={:.2}\n  duration={:.0}ms\n  easing={:?}",
-            event.margin, event.duration_ms, event.easing,
+            event.margin,
+            event.duration.as_secs_f32() * 1000.0,
+            event.easing,
         ),
         &time,
     );
@@ -712,6 +794,18 @@ fn log_zoom_begin(event: On<ZoomBegin>, time: Res<Time>, mut log: ResMut<EventLo
 
 fn log_zoom_end(_event: On<ZoomEnd>, time: Res<Time>, mut log: ResMut<EventLog>) {
     log.push("ZoomEnd".to_string(), &time);
+}
+
+fn log_animation_cancelled(
+    _event: On<AnimationCancelled>,
+    time: Res<Time>,
+    mut log: ResMut<EventLog>,
+) {
+    log.push("AnimationCancelled".to_string(), &time);
+}
+
+fn log_zoom_cancelled(_event: On<ZoomCancelled>, time: Res<Time>, mut log: ResMut<EventLog>) {
+    log.push("ZoomCancelled".to_string(), &time);
 }
 
 fn update_event_log_text(
