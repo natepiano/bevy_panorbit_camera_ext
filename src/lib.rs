@@ -35,12 +35,13 @@ pub use events::ZoomEnd;
 pub use events::ZoomToFit;
 // Public API - Fit types
 pub use fit::Edge;
-pub use fit::ScreenSpaceBounds;
 use observers::on_animate_to_fit;
 use observers::on_play_animation;
 use observers::on_set_fit_target;
 use observers::on_zoom_to_fit;
 use observers::restore_smoothness_on_move_end;
+pub use support::PointDepths;
+pub use support::ScreenSpaceBounds;
 // Public API - Gizmo groups (for enabling/disabling)
 pub use visualization::FitTargetGizmo;
 pub use visualization::FitTargetMargins;

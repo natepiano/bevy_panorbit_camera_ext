@@ -92,6 +92,147 @@ pub fn projection_aspect_ratio(
 }
 
 // ============================================================================
+// Screen-space bounds
+// ============================================================================
+
+/// Depths of the extreme projected points, tracked during the projection loop.
+/// Used by the fit algorithm for perspective-correct centering (harmonic mean)
+/// and by visualization for average depth (gizmo placement).
+#[derive(Debug, Clone)]
+pub struct PointDepths {
+    pub min_x_depth: f32,
+    pub max_x_depth: f32,
+    pub min_y_depth: f32,
+    pub max_y_depth: f32,
+    pub depth_sum:   f32,
+    pub point_count: usize,
+}
+
+impl PointDepths {
+    /// Average depth across all projected points.
+    pub fn avg_depth(&self) -> f32 { self.depth_sum / self.point_count as f32 }
+}
+
+/// Screen-space bounds of a set of projected points, with margin distances
+/// from each screen edge.
+#[derive(Debug, Clone)]
+pub struct ScreenSpaceBounds {
+    /// Distance from left edge (positive = inside, negative = outside)
+    pub left_margin:   f32,
+    /// Distance from right edge (positive = inside, negative = outside)
+    pub right_margin:  f32,
+    /// Distance from top edge (positive = inside, negative = outside)
+    pub top_margin:    f32,
+    /// Distance from bottom edge (positive = inside, negative = outside)
+    pub bottom_margin: f32,
+    /// Minimum normalized x coordinate in screen space
+    pub min_norm_x:    f32,
+    /// Maximum normalized x coordinate in screen space
+    pub max_norm_x:    f32,
+    /// Minimum normalized y coordinate in screen space
+    pub min_norm_y:    f32,
+    /// Maximum normalized y coordinate in screen space
+    pub max_norm_y:    f32,
+    /// Half visible extent in x (perspective: half_tan_hfov, ortho: area.width()/2)
+    pub half_extent_x: f32,
+    /// Half visible extent in y (perspective: half_tan_vfov, ortho: area.height()/2)
+    pub half_extent_y: f32,
+}
+
+impl ScreenSpaceBounds {
+    /// Projects world-space points to normalized screen space and computes margins.
+    /// Returns `None` if any point is behind the camera (perspective only).
+    pub fn from_points(
+        points: &[Vec3],
+        cam_global: &GlobalTransform,
+        projection: &Projection,
+        viewport_aspect: f32,
+    ) -> Option<(Self, PointDepths)> {
+        let ProjectionParams {
+            half_extent_x,
+            half_extent_y,
+            is_ortho,
+        } = ProjectionParams::from_projection(projection, viewport_aspect)?;
+
+        let cam_pos = cam_global.translation();
+        let cam_rot = cam_global.rotation();
+        let cam_forward = cam_rot * Vec3::NEG_Z;
+        let cam_right = cam_rot * Vec3::X;
+        let cam_up = cam_rot * Vec3::Y;
+
+        let mut min_norm_x = f32::INFINITY;
+        let mut max_norm_x = f32::NEG_INFINITY;
+        let mut min_norm_y = f32::INFINITY;
+        let mut max_norm_y = f32::NEG_INFINITY;
+        let mut min_x_depth = 0.0_f32;
+        let mut max_x_depth = 0.0_f32;
+        let mut min_y_depth = 0.0_f32;
+        let mut max_y_depth = 0.0_f32;
+        let mut depth_sum = 0.0_f32;
+
+        for point in points {
+            let (norm_x, norm_y, depth) =
+                project_point(*point, cam_pos, cam_right, cam_up, cam_forward, is_ortho)?;
+
+            depth_sum += depth;
+
+            if norm_x < min_norm_x {
+                min_norm_x = norm_x;
+                min_x_depth = depth;
+            }
+            if norm_x > max_norm_x {
+                max_norm_x = norm_x;
+                max_x_depth = depth;
+            }
+            if norm_y < min_norm_y {
+                min_norm_y = norm_y;
+                min_y_depth = depth;
+            }
+            if norm_y > max_norm_y {
+                max_norm_y = norm_y;
+                max_y_depth = depth;
+            }
+        }
+
+        let left_margin = min_norm_x - (-half_extent_x);
+        let right_margin = half_extent_x - max_norm_x;
+        let bottom_margin = min_norm_y - (-half_extent_y);
+        let top_margin = half_extent_y - max_norm_y;
+
+        let bounds = Self {
+            left_margin,
+            right_margin,
+            top_margin,
+            bottom_margin,
+            min_norm_x,
+            max_norm_x,
+            min_norm_y,
+            max_norm_y,
+            half_extent_x,
+            half_extent_y,
+        };
+
+        let depths = PointDepths {
+            min_x_depth,
+            max_x_depth,
+            min_y_depth,
+            max_y_depth,
+            depth_sum,
+            point_count: points.len(),
+        };
+
+        Some((bounds, depths))
+    }
+
+    /// Returns the center of the bounds in normalized screen space
+    pub const fn center(&self) -> (f32, f32) {
+        let center_x = (self.min_norm_x + self.max_norm_x) * 0.5;
+        let center_y = (self.min_norm_y + self.max_norm_y) * 0.5;
+        (center_x, center_y)
+    }
+}
+
+// ============================================================================
 // Mesh utilities
 // ============================================================================
 

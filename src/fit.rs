@@ -6,8 +6,7 @@
 
 use bevy::prelude::*;
 
-use crate::support::ProjectionParams;
-use crate::support::project_point;
+use crate::support::ScreenSpaceBounds;
 use crate::support::projection_aspect_ratio;
 
 // ============================================================================
@@ -27,7 +26,7 @@ pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
 // ============================================================================
 
 /// Screen edge identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect)]
 pub enum Edge {
     Left,
     Right,
@@ -35,199 +34,34 @@ pub enum Edge {
     Bottom,
 }
 
-/// Screen-space bounds information with margin calculations
-#[derive(Debug, Clone)]
-pub struct ScreenSpaceBounds {
-    /// Distance from left edge (positive = inside, negative = outside)
-    pub left_margin:       f32,
-    /// Distance from right edge (positive = inside, negative = outside)
-    pub right_margin:      f32,
-    /// Distance from top edge (positive = inside, negative = outside)
-    pub top_margin:        f32,
-    /// Distance from bottom edge (positive = inside, negative = outside)
-    pub bottom_margin:     f32,
-    /// Target margin for horizontal (in screen-space units)
-    pub target_margin_x:   f32,
-    /// Target margin for vertical (in screen-space units)
-    pub target_margin_y:   f32,
-    /// Minimum normalized x coordinate in screen space
-    pub min_norm_x:        f32,
-    /// Maximum normalized x coordinate in screen space
-    pub max_norm_x:        f32,
-    /// Minimum normalized y coordinate in screen space
-    pub min_norm_y:        f32,
-    /// Maximum normalized y coordinate in screen space
-    pub max_norm_y:        f32,
-    /// Harmonic mean depth of the two corners defining horizontal extremes
-    /// (1.0 for orthographic since projection is depth-independent)
-    pub centering_depth_x: f32,
-    /// Harmonic mean depth of the two corners defining vertical extremes
-    /// (1.0 for orthographic since projection is depth-independent)
-    pub centering_depth_y: f32,
-    /// Half visible extent in x (perspective: half_tan_hfov, ortho: area.width()/2)
-    pub half_extent_x:     f32,
-    /// Half visible extent in y (perspective: half_tan_vfov, ortho: area.height()/2)
-    pub half_extent_y:     f32,
-}
+// ============================================================================
+// Target margin calculation
+// ============================================================================
 
-impl ScreenSpaceBounds {
-    /// Creates screen space bounds from a camera's view of a set of points.
-    /// Returns `None` if any point is behind the camera (perspective only).
-    ///
-    /// Works with both perspective and orthographic projections:
-    /// - **Perspective**: normalizes by depth (`x/depth`), uses harmonic mean for centering
-    /// - **Orthographic**: uses raw camera-space coordinates (depth-independent), centering depth =
-    ///   1.0
-    pub fn from_points(
-        points: &[Vec3],
-        cam_global: &GlobalTransform,
-        projection: &Projection,
-        viewport_aspect: f32,
-        zoom_multiplier: f32,
-    ) -> Option<Self> {
-        let ProjectionParams {
-            half_extent_x,
-            half_extent_y,
-            is_ortho,
-        } = ProjectionParams::from_projection(projection, viewport_aspect)?;
+/// Computes the target margins for the constraining dimension based on aspect ratios.
+/// Returns `(target_margin_x, target_margin_y)`.
+fn calculate_target_margins(bounds: &ScreenSpaceBounds, zoom_multiplier: f32) -> (f32, f32) {
+    let boundary_aspect =
+        (bounds.max_norm_x - bounds.min_norm_x) / (bounds.max_norm_y - bounds.min_norm_y);
+    let screen_aspect = bounds.half_extent_x / bounds.half_extent_y;
 
-        // Get camera basis vectors from global transform
-        let cam_pos = cam_global.translation();
-        let cam_rot = cam_global.rotation();
-        let cam_forward = cam_rot * Vec3::NEG_Z;
-        let cam_right = cam_rot * Vec3::X;
-        let cam_up = cam_rot * Vec3::Y;
+    // If boundary is wider (relative to height) than screen, width constrains
+    let width_constrains = boundary_aspect > screen_aspect;
 
-        // Project points to normalized screen space
-        let mut min_norm_x = f32::INFINITY;
-        let mut max_norm_x = f32::NEG_INFINITY;
-        let mut min_norm_y = f32::INFINITY;
-        let mut max_norm_y = f32::NEG_INFINITY;
-        let mut min_x_depth = 0.0_f32;
-        let mut max_x_depth = 0.0_f32;
-        let mut min_y_depth = 0.0_f32;
-        let mut max_y_depth = 0.0_f32;
+    let (target_edge_x, target_edge_y) = if width_constrains {
+        let target_x = bounds.half_extent_x / zoom_multiplier;
+        let target_y = target_x / boundary_aspect;
+        (target_x, target_y)
+    } else {
+        let target_y = bounds.half_extent_y / zoom_multiplier;
+        let target_x = target_y * boundary_aspect;
+        (target_x, target_y)
+    };
 
-        for point in points {
-            let (norm_x, norm_y, depth) =
-                project_point(*point, cam_pos, cam_right, cam_up, cam_forward, is_ortho)?;
-
-            if norm_x < min_norm_x {
-                min_norm_x = norm_x;
-                min_x_depth = depth;
-            }
-            if norm_x > max_norm_x {
-                max_norm_x = norm_x;
-                max_x_depth = depth;
-            }
-            if norm_y < min_norm_y {
-                min_norm_y = norm_y;
-                min_y_depth = depth;
-            }
-            if norm_y > max_norm_y {
-                max_norm_y = norm_y;
-                max_y_depth = depth;
-            }
-        }
-
-        // Centering depths: perspective uses harmonic mean for perspective-correct
-        // centering. Ortho uses 1.0 since projection is depth-independent.
-        let (centering_depth_x, centering_depth_y) = if is_ortho {
-            (1.0, 1.0)
-        } else {
-            (
-                2.0 * min_x_depth * max_x_depth / (min_x_depth + max_x_depth),
-                2.0 * min_y_depth * max_y_depth / (min_y_depth + max_y_depth),
-            )
-        };
-
-        // Determine which dimension SHOULD constrain based on aspect ratios
-        let boundary_aspect = (max_norm_x - min_norm_x) / (max_norm_y - min_norm_y);
-        let screen_aspect = half_extent_x / half_extent_y;
-
-        // If boundary is wider (relative to height) than screen, width constrains
-        // If boundary is taller (relative to width) than screen, height constrains
-        let width_constrains = boundary_aspect > screen_aspect;
-
-        // Calculate target edge for the constraining dimension only
-        let (target_edge_x, target_edge_y) = if width_constrains {
-            // Width constrains - set horizontal target, vertical gets extra space
-            let target_x = half_extent_x / zoom_multiplier;
-            // Vertical target is at the boundary's aspect ratio from horizontal
-            let target_y = target_x / boundary_aspect;
-            (target_x, target_y)
-        } else {
-            // Height constrains - set vertical target, horizontal gets extra space
-            let target_y = half_extent_y / zoom_multiplier;
-            // Horizontal target is at the boundary's aspect ratio from vertical
-            let target_x = target_y * boundary_aspect;
-            (target_x, target_y)
-        };
-
-        // Calculate margins as distance from bounds to screen edges
-        let left_margin = min_norm_x - (-half_extent_x);
-        let right_margin = half_extent_x - max_norm_x;
-        let bottom_margin = min_norm_y - (-half_extent_y);
-        let top_margin = half_extent_y - max_norm_y;
-
-        // Target margins are the difference between screen edge and target edge
-        let target_margin_x = half_extent_x - target_edge_x;
-        let target_margin_y = half_extent_y - target_edge_y;
-
-        Some(Self {
-            left_margin,
-            right_margin,
-            top_margin,
-            bottom_margin,
-            target_margin_x,
-            target_margin_y,
-            min_norm_x,
-            max_norm_x,
-            min_norm_y,
-            max_norm_y,
-            centering_depth_x,
-            centering_depth_y,
-            half_extent_x,
-            half_extent_y,
-        })
-    }
-
-    /// Returns true if the margins are balanced (opposite sides are equal)
-    pub fn is_balanced(&self, tolerance: f32) -> bool {
-        let horizontal_balanced = (self.left_margin - self.right_margin).abs() < tolerance;
-        let vertical_balanced = (self.top_margin - self.bottom_margin).abs() < tolerance;
-        horizontal_balanced && vertical_balanced
-    }
-
-    /// Returns true if the constraining dimension has reached its target margin
-    pub fn is_fitted(&self, at_target_tolerance: f32) -> bool {
-        let h_min = self.left_margin.min(self.right_margin);
-        let v_min = self.top_margin.min(self.bottom_margin);
-
-        // The constraining dimension is the one with smaller margin
-        let (constraining_margin, target_margin) = if h_min < v_min {
-            (h_min, self.target_margin_x)
-        } else {
-            (v_min, self.target_margin_y)
-        };
-
-        // Check if constraining dimension is at target
-        (constraining_margin - target_margin).abs() < at_target_tolerance
-    }
-
-    /// Returns the center of the bounds in normalized screen space
-    pub const fn center(&self) -> (f32, f32) {
-        let center_x = (self.min_norm_x + self.max_norm_x) * 0.5;
-        let center_y = (self.min_norm_y + self.max_norm_y) * 0.5;
-        (center_x, center_y)
-    }
-
-    /// Returns the span (width, height) of the bounds in normalized screen space
-    pub const fn span(&self) -> (f32, f32) {
-        let span_x = self.max_norm_x - self.min_norm_x;
-        let span_y = self.max_norm_y - self.min_norm_y;
-        (span_x, span_y)
-    }
+    (
+        bounds.half_extent_x - target_edge_x,
+        bounds.half_extent_y - target_edge_y,
+    )
 }
 
 // ============================================================================
@@ -262,6 +96,7 @@ pub fn calculate_fit(
         _ => None,
     };
 
+    let is_ortho = ortho_fixed_distance.is_some();
     let zoom_multiplier = zoom_margin_multiplier(margin);
 
     let rot = Quat::from_euler(EulerRot::YXZ, yaw, -pitch, 0.0);
@@ -302,6 +137,7 @@ pub fn calculate_fit(
             &test_projection,
             aspect_ratio,
             ortho_fixed_distance,
+            is_ortho,
         );
 
         // Step 2: evaluate margins at the centered focus position.
@@ -311,13 +147,9 @@ pub fn calculate_fit(
         let cam_global =
             GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
 
-        let Some(bounds) = ScreenSpaceBounds::from_points(
-            points,
-            &cam_global,
-            &test_projection,
-            aspect_ratio,
-            zoom_multiplier,
-        ) else {
+        let Some((bounds, _)) =
+            ScreenSpaceBounds::from_points(points, &cam_global, &test_projection, aspect_ratio)
+        else {
             warn!(
                 "Iteration {iteration}: Points behind camera at radius {test_radius:.1}, searching higher"
             );
@@ -325,14 +157,16 @@ pub fn calculate_fit(
             continue;
         };
 
+        let (target_margin_x, target_margin_y) = calculate_target_margins(&bounds, zoom_multiplier);
+
         // Find constraining dimension (minimum margin)
         let h_min = bounds.left_margin.min(bounds.right_margin);
         let v_min = bounds.top_margin.min(bounds.bottom_margin);
 
         let (current_margin, target_margin, dimension) = if h_min < v_min {
-            (h_min, bounds.target_margin_x, "H")
+            (h_min, target_margin_x, "H")
         } else {
-            (v_min, bounds.target_margin_y, "V")
+            (v_min, target_margin_y, "V")
         };
 
         debug!(
@@ -423,6 +257,7 @@ fn refine_focus_centering(
     projection: &Projection,
     aspect_ratio: f32,
     ortho_fixed_distance: Option<f32>,
+    is_ortho: bool,
 ) -> Vec3 {
     let cam_right = rot * Vec3::X;
     let cam_up = rot * Vec3::Y;
@@ -434,8 +269,8 @@ fn refine_focus_centering(
         let cam_pos = focus + rot * Vec3::new(0.0, 0.0, cam_distance);
         let cam_global =
             GlobalTransform::from(Transform::from_translation(cam_pos).with_rotation(rot));
-        let Some(bounds) =
-            ScreenSpaceBounds::from_points(points, &cam_global, projection, aspect_ratio, 1.0)
+        let Some((bounds, depths)) =
+            ScreenSpaceBounds::from_points(points, &cam_global, projection, aspect_ratio)
         else {
             break;
         };
@@ -443,7 +278,21 @@ fn refine_focus_centering(
         if cx.abs() < CENTERING_TOLERANCE && cy.abs() < CENTERING_TOLERANCE {
             break;
         }
-        focus += cam_right * cx * bounds.centering_depth_x + cam_up * cy * bounds.centering_depth_y;
+
+        // Centering depths: perspective uses harmonic mean for perspective-correct
+        // centering. Ortho uses 1.0 since projection is depth-independent.
+        let (centering_depth_x, centering_depth_y) = if is_ortho {
+            (1.0, 1.0)
+        } else {
+            (
+                2.0 * depths.min_x_depth * depths.max_x_depth
+                    / (depths.min_x_depth + depths.max_x_depth),
+                2.0 * depths.min_y_depth * depths.max_y_depth
+                    / (depths.min_y_depth + depths.max_y_depth),
+            )
+        };
+
+        focus += cam_right * cx * centering_depth_x + cam_up * cy * centering_depth_y;
     }
     focus
 }

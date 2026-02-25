@@ -8,7 +8,8 @@ use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::components::CurrentFitTarget;
-use crate::support::ProjectionParams;
+use crate::fit::Edge;
+use crate::support::ScreenSpaceBounds;
 use crate::support::extract_mesh_vertices;
 use crate::support::project_point;
 use crate::support::projection_aspect_ratio;
@@ -131,42 +132,9 @@ fn sync_gizmo_render_layers(
     gizmo_config.line.width = viz_config.line_width;
 }
 
-/// Boundary box edges
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Reflect)]
-enum Edge {
-    Left,
-    Right,
-    Top,
-    Bottom,
-}
-
-/// Screen-space margin information for a boundary
-struct ScreenSpaceBoundary {
-    /// Distance from left edge (positive = inside, negative = outside)
-    left_margin:   f32,
-    /// Distance from right edge (positive = inside, negative = outside)
-    right_margin:  f32,
-    /// Distance from top edge (positive = inside, negative = outside)
-    top_margin:    f32,
-    /// Distance from bottom edge (positive = inside, negative = outside)
-    bottom_margin: f32,
-    /// Minimum normalized x coordinate in screen space
-    min_norm_x:    f32,
-    /// Maximum normalized x coordinate in screen space
-    max_norm_x:    f32,
-    /// Minimum normalized y coordinate in screen space
-    min_norm_y:    f32,
-    /// Maximum normalized y coordinate in screen space
-    max_norm_y:    f32,
-    /// Average depth of boundary points from camera
-    avg_depth:     f32,
-    /// Half visible extent in x (perspective: half_extent_x, ortho: area.width()/2)
-    half_extent_x: f32,
-    /// Half visible extent in y (perspective: half_extent_y, ortho: area.height()/2)
-    half_extent_y: f32,
-    /// Whether this boundary uses orthographic projection
-    is_ortho:      bool,
-}
+// ============================================================================
+// Camera basis
+// ============================================================================
 
 /// Camera basis vectors extracted from a `GlobalTransform`.
 /// Bundles the position and orientation vectors that are frequently passed together.
@@ -189,164 +157,110 @@ impl CameraBasis {
     }
 }
 
-impl ScreenSpaceBoundary {
-    /// Creates screen space margins from a camera's view of target points.
-    /// Returns `None` if any point is behind the camera (perspective only).
-    fn from_points(
-        points: &[Vec3],
-        cam_global: &GlobalTransform,
-        projection: &Projection,
-        viewport_aspect: f32,
-    ) -> Option<Self> {
-        let ProjectionParams {
-            half_extent_x,
-            half_extent_y,
-            is_ortho,
-        } = ProjectionParams::from_projection(projection, viewport_aspect)?;
+// ============================================================================
+// Free functions operating on `ScreenSpaceBounds`
+// ============================================================================
 
-        // Get camera basis vectors from global transform
-        let cam_pos = cam_global.translation();
-        let cam_rot = cam_global.rotation();
-        let cam_forward = cam_rot * Vec3::NEG_Z;
-        let cam_right = cam_rot * Vec3::X;
-        let cam_up = cam_rot * Vec3::Y;
+/// Returns true if horizontal margins are balanced
+fn is_horizontally_balanced(bounds: &ScreenSpaceBounds, tolerance: f32) -> bool {
+    (bounds.left_margin - bounds.right_margin).abs() < tolerance
+}
 
-        // Project points to screen space
-        let mut min_norm_x = f32::INFINITY;
-        let mut max_norm_x = f32::NEG_INFINITY;
-        let mut min_norm_y = f32::INFINITY;
-        let mut max_norm_y = f32::NEG_INFINITY;
-        let mut avg_depth = 0.0;
+/// Returns true if vertical margins are balanced
+fn is_vertically_balanced(bounds: &ScreenSpaceBounds, tolerance: f32) -> bool {
+    (bounds.top_margin - bounds.bottom_margin).abs() < tolerance
+}
 
-        for point in points {
-            let (norm_x, norm_y, depth) =
-                project_point(*point, cam_pos, cam_right, cam_up, cam_forward, is_ortho)?;
+/// Returns the screen edges in normalized space: (left, right, top, bottom)
+fn screen_edges_normalized(bounds: &ScreenSpaceBounds) -> (f32, f32, f32, f32) {
+    (
+        -bounds.half_extent_x,
+        bounds.half_extent_x,
+        bounds.half_extent_y,
+        -bounds.half_extent_y,
+    )
+}
 
-            min_norm_x = min_norm_x.min(norm_x);
-            max_norm_x = max_norm_x.max(norm_x);
-            min_norm_y = min_norm_y.min(norm_y);
-            max_norm_y = max_norm_y.max(norm_y);
-            avg_depth += depth;
-        }
-        avg_depth /= points.len() as f32;
+/// Returns the center of a boundary edge in normalized space
+fn boundary_edge_center(bounds: &ScreenSpaceBounds, edge: Edge) -> Option<(f32, f32)> {
+    let (left_edge, right_edge, top_edge, bottom_edge) = screen_edges_normalized(bounds);
 
-        // Calculate margins as distance from bounds to screen edges
-        let left_margin = min_norm_x - (-half_extent_x);
-        let right_margin = half_extent_x - max_norm_x;
-        let bottom_margin = min_norm_y - (-half_extent_y);
-        let top_margin = half_extent_y - max_norm_y;
-
-        Some(Self {
-            left_margin,
-            right_margin,
-            top_margin,
-            bottom_margin,
-            min_norm_x,
-            max_norm_x,
-            min_norm_y,
-            max_norm_y,
-            avg_depth,
-            half_extent_x,
-            half_extent_y,
-            is_ortho,
-        })
+    match edge {
+        Edge::Left if bounds.min_norm_x > left_edge => {
+            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
+            Some((bounds.min_norm_x, y))
+        },
+        Edge::Right if bounds.max_norm_x < right_edge => {
+            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
+            Some((bounds.max_norm_x, y))
+        },
+        Edge::Top if bounds.max_norm_y < top_edge => {
+            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
+            Some((x, bounds.max_norm_y))
+        },
+        Edge::Bottom if bounds.min_norm_y > bottom_edge => {
+            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
+            Some((x, bounds.min_norm_y))
+        },
+        _ => None,
     }
+}
 
-    /// Returns true if horizontal margins are balanced
-    fn is_horizontally_balanced(&self, tolerance: f32) -> bool {
-        (self.left_margin - self.right_margin).abs() < tolerance
+/// Returns the center of a screen edge in normalized space
+fn screen_edge_center(bounds: &ScreenSpaceBounds, edge: Edge) -> (f32, f32) {
+    let (left_edge, right_edge, top_edge, bottom_edge) = screen_edges_normalized(bounds);
+
+    match edge {
+        Edge::Left => {
+            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
+            (left_edge, y)
+        },
+        Edge::Right => {
+            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
+            (right_edge, y)
+        },
+        Edge::Top => {
+            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
+            (x, top_edge)
+        },
+        Edge::Bottom => {
+            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
+            (x, bottom_edge)
+        },
     }
+}
 
-    /// Returns true if vertical margins are balanced
-    fn is_vertically_balanced(&self, tolerance: f32) -> bool {
-        (self.top_margin - self.bottom_margin).abs() < tolerance
-    }
+/// Converts normalized screen-space coordinates to world space.
+///
+/// For perspective, reverses the perspective divide by multiplying by `avg_depth`.
+/// For orthographic, coordinates are already in world units — `avg_depth` is only
+/// used for the forward component to position the gizmo plane.
+fn normalized_to_world(
+    norm_x: f32,
+    norm_y: f32,
+    cam: &CameraBasis,
+    avg_depth: f32,
+    is_ortho: bool,
+) -> Vec3 {
+    let (world_x, world_y) = if is_ortho {
+        (norm_x, norm_y)
+    } else {
+        (norm_x * avg_depth, norm_y * avg_depth)
+    };
+    cam.pos + cam.right * world_x + cam.up * world_y + cam.forward * avg_depth
+}
 
-    /// Returns the center of a boundary edge in normalized space
-    fn boundary_edge_center(&self, edge: Edge) -> Option<(f32, f32)> {
-        let (left_edge, right_edge, top_edge, bottom_edge) = self.screen_edges_normalized();
+/// Returns the margin percentage for a given edge.
+/// Percentage represents how much of the screen width/height is margin.
+fn margin_percentage(bounds: &ScreenSpaceBounds, edge: Edge) -> f32 {
+    let screen_width = 2.0 * bounds.half_extent_x;
+    let screen_height = 2.0 * bounds.half_extent_y;
 
-        match edge {
-            Edge::Left if self.min_norm_x > left_edge => {
-                let y = (self.min_norm_y.max(bottom_edge) + self.max_norm_y.min(top_edge)) * 0.5;
-                Some((self.min_norm_x, y))
-            },
-            Edge::Right if self.max_norm_x < right_edge => {
-                let y = (self.min_norm_y.max(bottom_edge) + self.max_norm_y.min(top_edge)) * 0.5;
-                Some((self.max_norm_x, y))
-            },
-            Edge::Top if self.max_norm_y < top_edge => {
-                let x = (self.min_norm_x.max(left_edge) + self.max_norm_x.min(right_edge)) * 0.5;
-                Some((x, self.max_norm_y))
-            },
-            Edge::Bottom if self.min_norm_y > bottom_edge => {
-                let x = (self.min_norm_x.max(left_edge) + self.max_norm_x.min(right_edge)) * 0.5;
-                Some((x, self.min_norm_y))
-            },
-            _ => None,
-        }
-    }
-
-    /// Returns the center of a screen edge in normalized space
-    fn screen_edge_center(&self, edge: Edge) -> (f32, f32) {
-        let (left_edge, right_edge, top_edge, bottom_edge) = self.screen_edges_normalized();
-
-        match edge {
-            Edge::Left => {
-                let y = (self.min_norm_y.max(bottom_edge) + self.max_norm_y.min(top_edge)) * 0.5;
-                (left_edge, y)
-            },
-            Edge::Right => {
-                let y = (self.min_norm_y.max(bottom_edge) + self.max_norm_y.min(top_edge)) * 0.5;
-                (right_edge, y)
-            },
-            Edge::Top => {
-                let x = (self.min_norm_x.max(left_edge) + self.max_norm_x.min(right_edge)) * 0.5;
-                (x, top_edge)
-            },
-            Edge::Bottom => {
-                let x = (self.min_norm_x.max(left_edge) + self.max_norm_x.min(right_edge)) * 0.5;
-                (x, bottom_edge)
-            },
-        }
-    }
-
-    /// Returns the screen edges in normalized space
-    fn screen_edges_normalized(&self) -> (f32, f32, f32, f32) {
-        (
-            -self.half_extent_x,
-            self.half_extent_x,
-            self.half_extent_y,
-            -self.half_extent_y,
-        )
-    }
-
-    /// Converts normalized screen-space coordinates to world space.
-    ///
-    /// For perspective, reverses the perspective divide by multiplying by `avg_depth`.
-    /// For orthographic, coordinates are already in world units — `avg_depth` is only
-    /// used for the forward component to position the gizmo plane.
-    fn normalized_to_world(&self, norm_x: f32, norm_y: f32, cam: &CameraBasis) -> Vec3 {
-        let (world_x, world_y) = if self.is_ortho {
-            (norm_x, norm_y)
-        } else {
-            (norm_x * self.avg_depth, norm_y * self.avg_depth)
-        };
-        cam.pos + cam.right * world_x + cam.up * world_y + cam.forward * self.avg_depth
-    }
-
-    /// Returns the margin percentage for a given edge.
-    /// Percentage represents how much of the screen width/height is margin.
-    fn margin_percentage(&self, edge: Edge) -> f32 {
-        let screen_width = 2.0 * self.half_extent_x;
-        let screen_height = 2.0 * self.half_extent_y;
-
-        match edge {
-            Edge::Left => (self.left_margin / screen_width) * 100.0,
-            Edge::Right => (self.right_margin / screen_width) * 100.0,
-            Edge::Top => (self.top_margin / screen_height) * 100.0,
-            Edge::Bottom => (self.bottom_margin / screen_height) * 100.0,
-        }
+    match edge {
+        Edge::Left => (bounds.left_margin / screen_width) * 100.0,
+        Edge::Right => (bounds.right_margin / screen_width) * 100.0,
+        Edge::Top => (bounds.top_margin / screen_height) * 100.0,
+        Edge::Bottom => (bounds.bottom_margin / screen_height) * 100.0,
     }
 }
 
@@ -420,8 +334,9 @@ fn project_vertices_to_2d(vertices: &[Vec3], cam: &CameraBasis, is_ortho: bool) 
 fn draw_silhouette_polygon(
     gizmos: &mut Gizmos<FitTargetGizmo>,
     hull_points: &[(f32, f32)],
-    boundary: &ScreenSpaceBoundary,
     cam: &CameraBasis,
+    avg_depth: f32,
+    is_ortho: bool,
     color: Color,
 ) {
     if hull_points.len() < 2 {
@@ -430,8 +345,15 @@ fn draw_silhouette_polygon(
 
     for i in 0..hull_points.len() {
         let next = (i + 1) % hull_points.len();
-        let start = boundary.normalized_to_world(hull_points[i].0, hull_points[i].1, cam);
-        let end = boundary.normalized_to_world(hull_points[next].0, hull_points[next].1, cam);
+        let start =
+            normalized_to_world(hull_points[i].0, hull_points[i].1, cam, avg_depth, is_ortho);
+        let end = normalized_to_world(
+            hull_points[next].0,
+            hull_points[next].1,
+            cam,
+            avg_depth,
+            is_ortho,
+        );
         gizmos.line(start, end, color);
     }
 }
@@ -466,12 +388,41 @@ const fn calculate_edge_color(
 }
 
 /// Creates the 4 corners of the screen-aligned boundary rectangle in world space
-fn create_screen_corners(margins: &ScreenSpaceBoundary, cam: &CameraBasis) -> [Vec3; 4] {
+fn create_screen_corners(
+    bounds: &ScreenSpaceBounds,
+    cam: &CameraBasis,
+    avg_depth: f32,
+    is_ortho: bool,
+) -> [Vec3; 4] {
     [
-        margins.normalized_to_world(margins.min_norm_x, margins.min_norm_y, cam),
-        margins.normalized_to_world(margins.max_norm_x, margins.min_norm_y, cam),
-        margins.normalized_to_world(margins.max_norm_x, margins.max_norm_y, cam),
-        margins.normalized_to_world(margins.min_norm_x, margins.max_norm_y, cam),
+        normalized_to_world(
+            bounds.min_norm_x,
+            bounds.min_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
+        normalized_to_world(
+            bounds.max_norm_x,
+            bounds.min_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
+        normalized_to_world(
+            bounds.max_norm_x,
+            bounds.max_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
+        normalized_to_world(
+            bounds.min_norm_x,
+            bounds.max_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
     ]
 }
 
@@ -505,15 +456,15 @@ fn norm_to_viewport(
 /// number of pixels from the screen-edge endpoint of the margin line.
 fn calculate_label_pixel_position(
     edge: Edge,
-    margins: &ScreenSpaceBoundary,
+    bounds: &ScreenSpaceBounds,
     viewport_size: Vec2,
 ) -> Vec2 {
-    let (screen_x, screen_y) = margins.screen_edge_center(edge);
+    let (screen_x, screen_y) = screen_edge_center(bounds, edge);
     let px = norm_to_viewport(
         screen_x,
         screen_y,
-        margins.half_extent_x,
-        margins.half_extent_y,
+        bounds.half_extent_x,
+        bounds.half_extent_y,
         viewport_size,
     );
 
@@ -703,33 +654,37 @@ fn draw_fit_target_bounds(
     };
 
     // Calculate screen-space bounds from mesh vertices
-    let Some(margins) =
-        ScreenSpaceBoundary::from_points(&vertices, cam_global, projection, aspect_ratio)
+    let Some((bounds, depths)) =
+        ScreenSpaceBounds::from_points(&vertices, cam_global, projection, aspect_ratio)
     else {
         return; // Target behind camera
     };
 
+    let avg_depth = depths.avg_depth();
+    let is_ortho = matches!(projection, Projection::Orthographic(_));
+
     // Update margin component on camera entity for BRP inspection
     commands.entity(camera_entity).insert(FitTargetMargins {
-        left_pct:   margins.margin_percentage(Edge::Left),
-        right_pct:  margins.margin_percentage(Edge::Right),
-        top_pct:    margins.margin_percentage(Edge::Top),
-        bottom_pct: margins.margin_percentage(Edge::Bottom),
+        left_pct:   margin_percentage(&bounds, Edge::Left),
+        right_pct:  margin_percentage(&bounds, Edge::Right),
+        top_pct:    margin_percentage(&bounds, Edge::Top),
+        bottom_pct: margin_percentage(&bounds, Edge::Bottom),
     });
 
     // Draw the screen-aligned bounding rectangle
-    let rect_corners_world = create_screen_corners(&margins, &cam_basis);
+    let rect_corners_world = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);
     draw_rectangle(&mut gizmos, &rect_corners_world, &config);
 
     // Draw silhouette polygon (convex hull) when visualization is enabled
     if visualization_enabled {
-        let projected = project_vertices_to_2d(&vertices, &cam_basis, margins.is_ortho);
+        let projected = project_vertices_to_2d(&vertices, &cam_basis, is_ortho);
         let hull = convex_hull_2d(&projected);
         draw_silhouette_polygon(
             &mut gizmos,
             &hull,
-            &margins,
             &cam_basis,
+            avg_depth,
+            is_ortho,
             config.silhouette_color,
         );
     }
@@ -737,10 +692,10 @@ fn draw_fit_target_bounds(
     // Place "screen space bounds" label inside the upper-left of the rectangle
     if visualization_enabled && let Some(viewport_size) = cam.logical_viewport_size() {
         let upper_left = norm_to_viewport(
-            margins.min_norm_x,
-            margins.max_norm_y,
-            margins.half_extent_x,
-            margins.half_extent_y,
+            bounds.min_norm_x,
+            bounds.max_norm_y,
+            bounds.half_extent_x,
+            bounds.half_extent_y,
             viewport_size,
         );
         let pos = Vec2::new(
@@ -751,20 +706,22 @@ fn draw_fit_target_bounds(
     }
 
     // Draw lines from visible boundary edges to screen edges and create margin labels
-    let h_balanced = margins.is_horizontally_balanced(crate::fit::TOLERANCE);
-    let v_balanced = margins.is_vertically_balanced(crate::fit::TOLERANCE);
+    let h_balanced = is_horizontally_balanced(&bounds, crate::fit::TOLERANCE);
+    let v_balanced = is_vertically_balanced(&bounds, crate::fit::TOLERANCE);
 
     // Track which edges are currently visible for label cleanup
     let mut visible_edges: Vec<Edge> = Vec::new();
 
     for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-        if let Some((boundary_x, boundary_y)) = margins.boundary_edge_center(edge) {
+        if let Some((boundary_x, boundary_y)) = boundary_edge_center(&bounds, edge) {
             visible_edges.push(edge);
 
-            let (screen_x, screen_y) = margins.screen_edge_center(edge);
+            let (screen_x, screen_y) = screen_edge_center(&bounds, edge);
 
-            let boundary_pos = margins.normalized_to_world(boundary_x, boundary_y, &cam_basis);
-            let screen_pos = margins.normalized_to_world(screen_x, screen_y, &cam_basis);
+            let boundary_pos =
+                normalized_to_world(boundary_x, boundary_y, &cam_basis, avg_depth, is_ortho);
+            let screen_pos =
+                normalized_to_world(screen_x, screen_y, &cam_basis, avg_depth, is_ortho);
 
             let color = calculate_edge_color(edge, h_balanced, v_balanced, &config);
             gizmos.line(boundary_pos, screen_pos, color);
@@ -772,14 +729,13 @@ fn draw_fit_target_bounds(
             // Only create labels when visualization is explicitly enabled
             if visualization_enabled {
                 // Add text label showing margin percentage
-                let percentage = margins.margin_percentage(edge);
+                let percentage = margin_percentage(&bounds, edge);
                 let text = format!("{percentage:.3}%");
 
                 let Some(viewport_size) = cam.logical_viewport_size() else {
                     continue;
                 };
-                let label_screen_pos =
-                    calculate_label_pixel_position(edge, &margins, viewport_size);
+                let label_screen_pos = calculate_label_pixel_position(edge, &bounds, viewport_size);
 
                 update_or_create_margin_label(
                     &mut commands,
