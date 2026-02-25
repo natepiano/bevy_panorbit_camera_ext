@@ -9,6 +9,7 @@ use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::components::CurrentFitTarget;
 use crate::fit::Edge;
+use crate::support::CameraBasis;
 use crate::support::ScreenSpaceBounds;
 use crate::support::extract_mesh_vertices;
 use crate::support::project_point;
@@ -130,31 +131,6 @@ fn sync_gizmo_render_layers(
         gizmo_config.render_layers = layers.clone();
     }
     gizmo_config.line.width = viz_config.line_width;
-}
-
-// ============================================================================
-// Camera basis
-// ============================================================================
-
-/// Camera basis vectors extracted from a `GlobalTransform`.
-/// Bundles the position and orientation vectors that are frequently passed together.
-struct CameraBasis {
-    pos:     Vec3,
-    right:   Vec3,
-    up:      Vec3,
-    forward: Vec3,
-}
-
-impl CameraBasis {
-    fn from_global_transform(global: &GlobalTransform) -> Self {
-        let rot = global.rotation();
-        Self {
-            pos:     global.translation(),
-            right:   rot * Vec3::X,
-            up:      rot * Vec3::Y,
-            forward: rot * Vec3::NEG_Z,
-        }
-    }
 }
 
 // ============================================================================
@@ -323,8 +299,7 @@ fn project_vertices_to_2d(vertices: &[Vec3], cam: &CameraBasis, is_ortho: bool) 
     vertices
         .iter()
         .filter_map(|v| {
-            let (norm_x, norm_y, _) =
-                project_point(*v, cam.pos, cam.right, cam.up, cam.forward, is_ortho)?;
+            let (norm_x, norm_y, _) = project_point(*v, cam, is_ortho)?;
             Some((norm_x, norm_y))
         })
         .collect()

@@ -3,6 +3,31 @@
 use bevy::prelude::*;
 
 // ============================================================================
+// Camera basis
+// ============================================================================
+
+/// Camera basis vectors extracted from a `GlobalTransform`.
+/// Bundles the position and orientation vectors that are frequently passed together.
+pub struct CameraBasis {
+    pub pos:     Vec3,
+    pub right:   Vec3,
+    pub up:      Vec3,
+    pub forward: Vec3,
+}
+
+impl CameraBasis {
+    pub fn from_global_transform(global: &GlobalTransform) -> Self {
+        let rot = global.rotation();
+        Self {
+            pos:     global.translation(),
+            right:   rot * Vec3::X,
+            up:      rot * Vec3::Y,
+            forward: rot * Vec3::NEG_Z,
+        }
+    }
+}
+
+// ============================================================================
 // Projection utilities
 // ============================================================================
 
@@ -46,21 +71,14 @@ impl ProjectionParams {
 ///
 /// Returns `(norm_x, norm_y, depth)` or `None` if the point is behind the camera
 /// (perspective only — orthographic points are always valid).
-pub fn project_point(
-    point: Vec3,
-    cam_pos: Vec3,
-    cam_right: Vec3,
-    cam_up: Vec3,
-    cam_forward: Vec3,
-    is_ortho: bool,
-) -> Option<(f32, f32, f32)> {
-    let relative = point - cam_pos;
-    let depth = relative.dot(cam_forward);
+pub fn project_point(point: Vec3, cam: &CameraBasis, is_ortho: bool) -> Option<(f32, f32, f32)> {
+    let relative = point - cam.pos;
+    let depth = relative.dot(cam.forward);
     if !is_ortho && depth <= MIN_VISIBLE_DEPTH {
         return None;
     }
-    let x = relative.dot(cam_right);
-    let y = relative.dot(cam_up);
+    let x = relative.dot(cam.right);
+    let y = relative.dot(cam.up);
     let (norm_x, norm_y) = if is_ortho {
         (x, y)
     } else {
@@ -154,11 +172,7 @@ impl ScreenSpaceBounds {
             is_ortho,
         } = ProjectionParams::from_projection(projection, viewport_aspect)?;
 
-        let cam_pos = cam_global.translation();
-        let cam_rot = cam_global.rotation();
-        let cam_forward = cam_rot * Vec3::NEG_Z;
-        let cam_right = cam_rot * Vec3::X;
-        let cam_up = cam_rot * Vec3::Y;
+        let cam = CameraBasis::from_global_transform(cam_global);
 
         let mut min_norm_x = f32::INFINITY;
         let mut max_norm_x = f32::NEG_INFINITY;
@@ -171,8 +185,7 @@ impl ScreenSpaceBounds {
         let mut depth_sum = 0.0_f32;
 
         for point in points {
-            let (norm_x, norm_y, depth) =
-                project_point(*point, cam_pos, cam_right, cam_up, cam_forward, is_ortho)?;
+            let (norm_x, norm_y, depth) = project_point(*point, &cam, is_ortho)?;
 
             depth_sum += depth;
 

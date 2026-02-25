@@ -158,6 +158,11 @@ impl SetFitTarget {
 /// Event to animate the camera to a specific orientation and fit a target entity in view.
 /// Combines orientation change with zoom-to-fit in a single smooth animation.
 ///
+/// Unlike [`ZoomToFit`], this fires [`AnimationBegin`]/[`AnimationEnd`] rather than
+/// [`ZoomBegin`]/[`ZoomEnd`]. `ZoomToFit` is a pure framing operation (preserves the
+/// current camera angle), while `AnimateToFit` is a cinematic move that changes yaw and
+/// pitch — so it uses the general animation lifecycle instead.
+///
 /// See [`ZoomToFit`] for details on how `margin` is applied.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]

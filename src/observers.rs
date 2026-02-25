@@ -43,14 +43,6 @@ pub fn on_zoom_to_fit(
         return;
     };
 
-    commands.trigger(ZoomBegin {
-        camera_entity,
-        target_entity,
-        margin,
-        duration_ms,
-        easing,
-    });
-
     debug!(
         "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={duration_ms:.0}",
         camera.target_yaw, camera.target_pitch, camera.target_focus, camera.target_radius
@@ -79,6 +71,14 @@ pub fn on_zoom_to_fit(
         warn!("ZoomToFit: Failed to calculate target radius for entity {target_entity:?}");
         return;
     };
+
+    commands.trigger(ZoomBegin {
+        camera_entity,
+        target_entity,
+        margin,
+        duration_ms,
+        easing,
+    });
 
     if duration_ms > 0.0 {
         // Animated path: use `ToOrbit` to pass orbital params directly, avoiding

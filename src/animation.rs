@@ -104,15 +104,25 @@ impl CameraMove {
     }
 }
 
+/// Tolerance for detecting external camera input during animations.
+/// Values within this threshold are considered unchanged (accounts for floating point noise).
+const EXTERNAL_INPUT_TOLERANCE: f32 = 1e-6;
+
 /// State tracking for the current camera movement
 #[derive(Clone, Reflect, Default, Debug)]
 enum MoveState {
     InProgress {
-        elapsed_ms:   f32,
-        start_focus:  Vec3,
-        start_pitch:  f32,
-        start_radius: f32,
-        start_yaw:    f32,
+        elapsed_ms:      f32,
+        start_focus:     Vec3,
+        start_pitch:     f32,
+        start_radius:    f32,
+        start_yaw:       f32,
+        /// Values written by the animation last frame — if the camera's current
+        /// values differ, external input occurred and the animation should cancel.
+        last_written_focus:  Vec3,
+        last_written_yaw:    f32,
+        last_written_pitch:  f32,
+        last_written_radius: f32,
     },
     #[default]
     Ready,
@@ -203,11 +213,6 @@ pub fn process_camera_move_list(
 
         match &mut queue.state {
             MoveState::Ready => {
-                // Disable smoothing for precise control
-                pan_orbit.zoom_smoothness = 0.0;
-                pan_orbit.pan_smoothness = 0.0;
-                pan_orbit.orbit_smoothness = 0.0;
-
                 // Transition to InProgress with captured starting orbital parameters
                 queue.state = MoveState::InProgress {
                     elapsed_ms:   0.0,
@@ -244,11 +249,8 @@ pub fn process_camera_move_list(
                 let (canonical_yaw, canonical_pitch, canonical_radius) =
                     current_move.orbital_params();
 
-                // Clamp t to exactly 1.0 if over (important for smooth completion)
-                let t_clamped = t.min(1.0);
-
                 // Apply easing function from the move
-                let t_interp = current_move.easing().sample_unchecked(t_clamped);
+                let t_interp = current_move.easing().sample_unchecked(t);
 
                 // Unwrap angles to [-PI, PI] for smooth interpolation (always, including final
                 // frame). Using canonical angles on the final frame causes yaw
