@@ -43,6 +43,49 @@ fn ensure_animation_smoothness(
     camera.orbit_smoothness = 0.0;
 }
 
+/// Shared fit preparation used by both ZoomToFit and AnimateToFit observers.
+/// Extracts target mesh vertices and computes the fit solution for the requested
+/// camera orientation.
+fn prepare_fit_for_target(
+    context: &str,
+    target_entity: Entity,
+    yaw: f32,
+    pitch: f32,
+    margin: f32,
+    projection: &Projection,
+    camera: &Camera,
+    mesh_query: &Query<&Mesh3d>,
+    children_query: &Query<&Children>,
+    global_transform_query: &Query<&GlobalTransform>,
+    meshes: &Assets<Mesh>,
+) -> Option<(f32, Vec3)> {
+    let Some((vertices, geometric_center)) = extract_mesh_vertices(
+        target_entity,
+        children_query,
+        mesh_query,
+        global_transform_query,
+        meshes,
+    ) else {
+        warn!("{context}: Failed to extract mesh vertices for entity {target_entity:?}");
+        return None;
+    };
+
+    let Some((target_radius, target_focus)) = calculate_fit(
+        &vertices,
+        geometric_center,
+        yaw,
+        pitch,
+        margin,
+        projection,
+        camera,
+    ) else {
+        warn!("{context}: Failed to calculate fit for entity {target_entity:?}");
+        return None;
+    };
+
+    Some((target_radius, target_focus))
+}
+
 /// Observer for `ZoomToFit` event - frames a target entity in the camera view.
 /// When duration is `Duration::ZERO`, snaps instantly.
 /// When duration is greater than zero, animates smoothly.
@@ -75,27 +118,19 @@ pub fn on_zoom_to_fit(
         duration.as_secs_f32() * 1000.0,
     );
 
-    let Some((vertices, geometric_center)) = extract_mesh_vertices(
+    let Some((target_radius, target_focus)) = prepare_fit_for_target(
+        "ZoomToFit",
         target_entity,
-        &children_query,
-        &mesh_query,
-        &global_transform_query,
-        &meshes,
-    ) else {
-        warn!("ZoomToFit: Failed to extract mesh vertices for entity {target_entity:?}");
-        return;
-    };
-
-    let Some((target_radius, target_focus)) = calculate_fit(
-        &vertices,
-        geometric_center,
         camera.target_yaw,
         camera.target_pitch,
         margin,
         projection,
         cam,
+        &mesh_query,
+        &children_query,
+        &global_transform_query,
+        &meshes,
     ) else {
-        warn!("ZoomToFit: Failed to calculate target radius for entity {target_entity:?}");
         return;
     };
 
@@ -233,27 +268,19 @@ pub fn on_animate_to_fit(
         return;
     };
 
-    let Some((vertices, geometric_center)) = extract_mesh_vertices(
+    let Some((target_radius, target_focus)) = prepare_fit_for_target(
+        "AnimateToFit",
         target_entity,
-        &children_query,
-        &mesh_query,
-        &global_transform_query,
-        &meshes,
-    ) else {
-        warn!("AnimateToFit: Failed to extract mesh vertices for entity {target_entity:?}");
-        return;
-    };
-
-    let Some((target_radius, target_focus)) = calculate_fit(
-        &vertices,
-        geometric_center,
         yaw,
         pitch,
         margin,
         projection,
         cam,
+        &mesh_query,
+        &children_query,
+        &global_transform_query,
+        &meshes,
     ) else {
-        warn!("AnimateToFit: Failed to calculate fit for entity {target_entity:?}");
         return;
     };
 
