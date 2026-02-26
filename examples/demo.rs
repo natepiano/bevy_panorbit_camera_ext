@@ -133,7 +133,7 @@ struct EventLogNode;
 struct InterruptBehaviorHint;
 
 struct EventLine {
-    text: String,
+    text:      String,
     timestamp: f32,
 }
 
@@ -141,9 +141,7 @@ struct EventLine {
 struct ActiveEasing(EaseFunction);
 
 impl Default for ActiveEasing {
-    fn default() -> Self {
-        Self(EaseFunction::CubicOut)
-    }
+    fn default() -> Self { Self(EaseFunction::CubicOut) }
 }
 
 const ALL_EASINGS: &[EaseFunction] = &[
@@ -204,9 +202,9 @@ enum MeshShape {
 
 #[derive(Resource)]
 struct SceneEntities {
-    camera: Entity,
+    camera:       Entity,
     scene_bounds: Entity,
-    light: Entity,
+    light:        Entity,
 }
 
 fn setup(
@@ -310,7 +308,7 @@ fn setup(
             button_pan: MouseButton::Middle,
             modifier_pan: Some(KeyCode::ShiftLeft),
             trackpad_behavior: TrackpadBehavior::BlenderLike {
-                modifier_pan: Some(KeyCode::ShiftLeft),
+                modifier_pan:  Some(KeyCode::ShiftLeft),
                 modifier_zoom: Some(KeyCode::ControlLeft),
             },
             trackpad_pinch_to_zoom_enabled: true,
@@ -691,10 +689,10 @@ fn toggle_projection(
 fn interrupt_behavior_hint_text(behavior: InterruptBehavior) -> String {
     match behavior {
         InterruptBehavior::Cancel => {
-            "InterruptBehavior::Cancel — camera input during animation will cancel it".into()
+            "InterruptBehavior::Cancel - camera input during animation will cancel it".into()
         },
         InterruptBehavior::Complete => {
-            "InterruptBehavior::Complete — camera input during animation will jump to final position"
+            "InterruptBehavior::Complete - camera input during animation will jump to final position"
                 .into()
         },
     }
@@ -751,9 +749,7 @@ impl EventLog {
     }
 }
 
-fn fmt_vec3(v: Vec3) -> String {
-    format!("({:.1}, {:.1}, {:.1})", v.x, v.y, v.z)
-}
+fn fmt_vec3(v: Vec3) -> String { format!("({:.1}, {:.1}, {:.1})", v.x, v.y, v.z) }
 
 fn log_animation_start(_event: On<AnimationBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
     log.push("AnimationBegin".into(), &time);

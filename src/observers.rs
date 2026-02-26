@@ -179,10 +179,8 @@ pub fn on_zoom_to_fit(
         });
     }
 
-    // Mark current fit target for visualization
-    commands
-        .entity(camera_entity)
-        .insert(CurrentFitTarget(target_entity));
+    // Route fit target updates through a single lifecycle owner.
+    commands.trigger(SetFitTarget::new(camera_entity, target_entity));
 }
 
 /// Observer for `PlayAnimation` event - initiates camera animation sequence
@@ -307,9 +305,8 @@ pub fn on_animate_to_fit(
         commands.trigger(AnimationBegin { camera_entity });
         commands.trigger(AnimationEnd { camera_entity });
     }
-    commands
-        .entity(camera_entity)
-        .insert(CurrentFitTarget(target_entity));
+    // Route fit target updates through a single lifecycle owner.
+    commands.trigger(SetFitTarget::new(camera_entity, target_entity));
 }
 
 /// Observer that restores smoothness when `CameraMoveList` is removed
