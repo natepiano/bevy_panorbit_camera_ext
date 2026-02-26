@@ -351,3 +351,78 @@ fn refine_focus_centering(
     }
     focus
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_perspective() -> Projection {
+        Projection::Perspective(PerspectiveProjection::default())
+    }
+
+    #[test]
+    fn calculate_fit_returns_no_viewport_for_invalid_ortho_area() {
+        let projection = Projection::Orthographic(OrthographicProjection {
+            area: Rect::new(-1.0, 0.0, 1.0, 0.0),
+            ..OrthographicProjection::default_3d()
+        });
+        let camera = Camera::default();
+
+        let result = calculate_fit(
+            &[Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)],
+            Vec3::ZERO,
+            0.0,
+            0.0,
+            0.1,
+            &projection,
+            &camera,
+        );
+
+        assert!(matches!(result, Err(FitError::NoViewport)));
+    }
+
+    #[test]
+    fn calculate_fit_returns_points_behind_camera_for_degenerate_point_cloud() {
+        let projection = default_perspective();
+        let camera = Camera::default();
+        let points = [Vec3::ZERO, Vec3::ZERO, Vec3::ZERO];
+
+        let result = calculate_fit(&points, Vec3::ZERO, 0.0, 0.0, 0.1, &projection, &camera);
+
+        assert!(matches!(result, Err(FitError::PointsBehindCamera)));
+    }
+
+    #[test]
+    fn calculate_fit_clamps_out_of_range_margin_and_still_returns_solution() {
+        let projection = default_perspective();
+        let camera = Camera::default();
+        let points = [
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+            Vec3::new(-1.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        ];
+
+        let result = calculate_fit(&points, Vec3::ZERO, 0.0, 0.0, 5.0, &projection, &camera);
+
+        let fit = result.expect("fit should succeed with clamped margin");
+        assert!(fit.radius.is_finite());
+        assert!(fit.focus.is_finite());
+    }
+
+    #[test]
+    fn calculate_fit_handles_nan_margin_by_clamping_to_zero() {
+        let projection = default_perspective();
+        let camera = Camera::default();
+        let points = [
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+            Vec3::new(-1.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+        ];
+
+        let result = calculate_fit(&points, Vec3::ZERO, 0.0, 0.0, f32::NAN, &projection, &camera);
+
+        assert!(result.is_ok());
+    }
+}
