@@ -20,6 +20,7 @@ use crate::events::ZoomBegin;
 use crate::events::ZoomEnd;
 use crate::events::ZoomToFit;
 use crate::fit::calculate_fit;
+use crate::fit::FitSolution;
 use crate::support::extract_mesh_vertices;
 
 /// Ensures camera smoothness is stashed once and disabled while animations are active.
@@ -58,7 +59,7 @@ fn prepare_fit_for_target(
     children_query: &Query<&Children>,
     global_transform_query: &Query<&GlobalTransform>,
     meshes: &Assets<Mesh>,
-) -> Option<(f32, Vec3)> {
+) -> Option<FitSolution> {
     let Some((vertices, geometric_center)) = extract_mesh_vertices(
         target_entity,
         children_query,
@@ -70,7 +71,7 @@ fn prepare_fit_for_target(
         return None;
     };
 
-    let Some((target_radius, target_focus)) = calculate_fit(
+    let fit = match calculate_fit(
         &vertices,
         geometric_center,
         yaw,
@@ -78,12 +79,15 @@ fn prepare_fit_for_target(
         margin,
         projection,
         camera,
-    ) else {
-        warn!("{context}: Failed to calculate fit for entity {target_entity:?}");
-        return None;
+    ) {
+        Ok(fit) => fit,
+        Err(error) => {
+            warn!("{context}: Failed to calculate fit for entity {target_entity:?}: {error}");
+            return None;
+        },
     };
 
-    Some((target_radius, target_focus))
+    Some(fit)
 }
 
 /// Observer for `ZoomToFit` event - frames a target entity in the camera view.
@@ -118,7 +122,7 @@ pub fn on_zoom_to_fit(
         duration.as_secs_f32() * 1000.0,
     );
 
-    let Some((target_radius, target_focus)) = prepare_fit_for_target(
+    let Some(fit) = prepare_fit_for_target(
         "ZoomToFit",
         target_entity,
         camera.target_yaw,
@@ -146,10 +150,10 @@ pub fn on_zoom_to_fit(
         // Animated path: use `ToOrbit` to pass orbital params directly, avoiding
         // gimbal lock from atan2 decomposition at extreme pitch angles.
         let moves = VecDeque::from([CameraMove::ToOrbit {
-            focus: target_focus,
+            focus: fit.focus,
             yaw: camera.target_yaw,
             pitch: camera.target_pitch,
-            radius: target_radius,
+            radius: fit.radius,
             duration,
             easing,
         }]);
@@ -165,10 +169,10 @@ pub fn on_zoom_to_fit(
         commands.trigger(PlayAnimation::new(camera_entity, moves));
     } else {
         // Instant path: snap directly to target
-        camera.focus = target_focus;
-        camera.radius = Some(target_radius);
-        camera.target_focus = target_focus;
-        camera.target_radius = target_radius;
+        camera.focus = fit.focus;
+        camera.radius = Some(fit.radius);
+        camera.target_focus = fit.focus;
+        camera.target_radius = fit.radius;
         camera.force_update = true;
         commands.trigger(ZoomEnd {
             camera_entity,
@@ -266,7 +270,7 @@ pub fn on_animate_to_fit(
         return;
     };
 
-    let Some((target_radius, target_focus)) = prepare_fit_for_target(
+    let Some(fit) = prepare_fit_for_target(
         "AnimateToFit",
         target_entity,
         yaw,
@@ -284,21 +288,21 @@ pub fn on_animate_to_fit(
 
     if duration > Duration::ZERO {
         let moves = VecDeque::from([CameraMove::ToOrbit {
-            focus: target_focus,
+            focus: fit.focus,
             yaw,
             pitch,
-            radius: target_radius,
+            radius: fit.radius,
             duration,
             easing,
         }]);
         commands.trigger(PlayAnimation::new(camera_entity, moves));
     } else {
-        camera.focus = target_focus;
+        camera.focus = fit.focus;
         camera.yaw = Some(yaw);
         camera.pitch = Some(pitch);
-        camera.radius = Some(target_radius);
-        camera.target_focus = target_focus;
-        camera.target_radius = target_radius;
+        camera.radius = Some(fit.radius);
+        camera.target_focus = fit.focus;
+        camera.target_radius = fit.radius;
         camera.target_yaw = yaw;
         camera.target_pitch = pitch;
         camera.force_update = true;

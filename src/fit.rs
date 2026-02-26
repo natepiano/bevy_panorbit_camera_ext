@@ -4,6 +4,8 @@
 //! loop that finds the optimal camera radius and focus to frame a set of mesh vertices
 //! with a specified margin.
 
+use core::fmt;
+
 use bevy::prelude::*;
 
 use crate::support::ScreenSpaceBounds;
@@ -36,6 +38,31 @@ pub enum Edge {
     Right,
     Top,
     Bottom,
+}
+
+/// Successful fit output: camera orbit radius and centered focus point.
+#[derive(Debug, Clone, Copy)]
+pub struct FitSolution {
+    pub radius: f32,
+    pub focus: Vec3,
+}
+
+/// Explicit fit calculation failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FitError {
+    /// Camera viewport size/aspect ratio is unavailable.
+    NoViewport,
+    /// All candidate fits projected points behind the camera.
+    PointsBehindCamera,
+}
+
+impl fmt::Display for FitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoViewport => write!(f, "camera viewport size is unavailable"),
+            Self::PointsBehindCamera => write!(f, "all candidate fits project points behind camera"),
+        }
+    }
 }
 
 // ============================================================================
@@ -77,7 +104,7 @@ fn calculate_target_margins(bounds: &ScreenSpaceBounds, zoom_multiplier: f32) ->
 ///
 /// For each candidate radius, computes the focus that centers the projected silhouette in the
 /// viewport (since the geometric center doesn't project to screen center from off-axis angles),
-/// then evaluates margins at that centered position. Returns the `(radius, focus)` pair where
+/// then evaluates margins at that centered position. Returns the fit solution where
 /// the constraining margin equals the target and the silhouette is centered.
 ///
 /// Note: A lateral camera shift doesn't change point depths, so the centering is geometrically
@@ -90,7 +117,7 @@ pub fn calculate_fit(
     margin: f32,
     projection: &Projection,
     camera: &Camera,
-) -> Option<(f32, Vec3)> {
+) -> Result<FitSolution, FitError> {
     let clamped_margin = if margin.is_nan() {
         MIN_MARGIN
     } else {
@@ -102,7 +129,8 @@ pub fn calculate_fit(
         );
     }
 
-    let aspect_ratio = projection_aspect_ratio(projection, camera.logical_viewport_size())?;
+    let aspect_ratio = projection_aspect_ratio(projection, camera.logical_viewport_size())
+        .ok_or(FitError::NoViewport)?;
 
     // For ortho, the camera is always at a fixed distance from focus.
     // PanOrbitCamera sets this to `(near + far) / 2.0`.
@@ -133,6 +161,7 @@ pub fn calculate_fit(
     let mut best_radius = object_radius * 2.0;
     let mut best_focus = geometric_center;
     let mut best_error = f32::INFINITY;
+    let mut found_projectable_bounds = false;
 
     debug!("Binary search starting: range [{min_radius:.1}, {max_radius:.1}]");
 
@@ -171,6 +200,7 @@ pub fn calculate_fit(
             min_radius = test_radius;
             continue;
         };
+        found_projectable_bounds = true;
 
         let (target_margin_x, target_margin_y) = calculate_target_margins(&bounds, zoom_multiplier);
 
@@ -208,15 +238,25 @@ pub fn calculate_fit(
             debug!(
                 "Iteration {iteration}: Converged to best radius {best_radius:.3} error={best_error:.5}"
             );
-            return Some((best_radius, best_focus));
+            return Ok(FitSolution {
+                radius: best_radius,
+                focus: best_focus,
+            });
         }
+    }
+
+    if !found_projectable_bounds {
+        return Err(FitError::PointsBehindCamera);
     }
 
     warn!(
         "Binary search did not converge in {MAX_ITERATIONS} iterations. Using best radius {best_radius:.1}"
     );
 
-    Some((best_radius, best_focus))
+    Ok(FitSolution {
+        radius: best_radius,
+        focus: best_focus,
+    })
 }
 
 /// Builds a test projection with the given radius/scale for binary search iterations.
