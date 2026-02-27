@@ -304,6 +304,7 @@ fn build_test_projection(projection: &Projection, test_radius: f32) -> Projectio
 ///
 /// For orthographic, centering is depth-independent (centering_depth = 1.0), so the shift
 /// is a direct 1:1 world-unit correction.
+#[allow(clippy::too_many_arguments)]
 fn refine_focus_centering(
     points: &[Vec3],
     initial_focus: Vec3,

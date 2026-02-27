@@ -3,9 +3,9 @@
 //! Provides screen-aligned boundary box and silhouette polygon visualization for the current
 //! camera fit target. Uses Bevy's GizmoConfigGroup pattern (similar to Avian3D's PhysicsGizmos).
 
-mod edge_layout;
-mod geometry;
+mod convex_hull;
 mod labels;
+mod screen_space;
 mod system;
 mod types;
 

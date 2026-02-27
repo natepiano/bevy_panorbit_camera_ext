@@ -101,10 +101,12 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
     app.add_plugins(MinimalPlugins);
     app.add_plugins(PanOrbitCameraExtPlugin);
 
-    let mut camera = PanOrbitCamera::default();
-    camera.zoom_smoothness = 0.25;
-    camera.pan_smoothness = 0.5;
-    camera.orbit_smoothness = 0.75;
+    let camera = PanOrbitCamera {
+        zoom_smoothness: 0.25,
+        pan_smoothness: 0.5,
+        orbit_smoothness: 0.75,
+        ..default()
+    };
 
     let camera_entity = app.world_mut().spawn(camera).id();
     let first = PlayAnimation::new(
@@ -193,10 +195,12 @@ fn direct_camera_move_list_insertion_stashes_and_disables_smoothness() {
     app.add_plugins(MinimalPlugins);
     app.add_plugins(PanOrbitCameraExtPlugin);
 
-    let mut camera = PanOrbitCamera::default();
-    camera.zoom_smoothness = 0.2;
-    camera.pan_smoothness = 0.3;
-    camera.orbit_smoothness = 0.4;
+    let camera = PanOrbitCamera {
+        zoom_smoothness: 0.2,
+        pan_smoothness: 0.3,
+        orbit_smoothness: 0.4,
+        ..default()
+    };
 
     let camera_entity = app.world_mut().spawn(camera).id();
     app.world_mut()
@@ -284,10 +288,12 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let mut camera = PanOrbitCamera::default();
-    camera.zoom_smoothness = 0.25;
-    camera.pan_smoothness = 0.5;
-    camera.orbit_smoothness = 0.75;
+    let camera = PanOrbitCamera {
+        zoom_smoothness: 0.25,
+        pan_smoothness: 0.5,
+        orbit_smoothness: 0.75,
+        ..default()
+    };
     let camera_entity = app
         .world_mut()
         .spawn((camera, InterruptBehavior::Cancel))
@@ -356,10 +362,12 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let mut camera = PanOrbitCamera::default();
-    camera.zoom_smoothness = 0.15;
-    camera.pan_smoothness = 0.35;
-    camera.orbit_smoothness = 0.55;
+    let camera = PanOrbitCamera {
+        zoom_smoothness: 0.15,
+        pan_smoothness: 0.35,
+        orbit_smoothness: 0.55,
+        ..default()
+    };
     let camera_entity = app
         .world_mut()
         .spawn((camera, InterruptBehavior::Complete))
@@ -440,10 +448,12 @@ fn normal_completion_restores_smoothness_after_queue_finishes() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let mut camera = PanOrbitCamera::default();
-    camera.zoom_smoothness = 0.45;
-    camera.pan_smoothness = 0.55;
-    camera.orbit_smoothness = 0.65;
+    let camera = PanOrbitCamera {
+        zoom_smoothness: 0.45,
+        pan_smoothness: 0.55,
+        orbit_smoothness: 0.65,
+        ..default()
+    };
     let camera_entity = app.world_mut().spawn(camera).id();
 
     app.world_mut().trigger(PlayAnimation::new(

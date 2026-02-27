@@ -47,6 +47,7 @@ fn ensure_animation_smoothness(
 /// Shared fit preparation used by both ZoomToFit and AnimateToFit observers.
 /// Extracts target mesh vertices and computes the fit solution for the requested
 /// camera orientation.
+#[allow(clippy::too_many_arguments)]
 fn prepare_fit_for_target(
     context: &str,
     target_entity: Entity,

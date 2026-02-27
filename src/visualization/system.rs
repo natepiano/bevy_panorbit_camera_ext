@@ -1,25 +1,21 @@
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
-use super::edge_layout::bounds_label_position;
-use super::edge_layout::calculate_label_pixel_position;
-use super::geometry::boundary_edge_center;
-use super::geometry::calculate_edge_color;
-use super::geometry::convex_hull_2d;
-use super::geometry::create_screen_corners;
-use super::geometry::draw_rectangle;
-use super::geometry::draw_silhouette_polygon;
-use super::geometry::is_horizontally_balanced;
-use super::geometry::is_vertically_balanced;
-use super::geometry::margin_percentage;
-use super::geometry::norm_to_viewport;
-use super::geometry::normalized_to_world;
-use super::geometry::project_vertices_to_2d;
-use super::geometry::screen_edge_center;
+use super::convex_hull::convex_hull_2d;
+use super::convex_hull::project_vertices_to_2d;
 use super::labels::BoundsLabel;
 use super::labels::MarginLabel;
+use super::labels::bounds_label_position;
+use super::labels::calculate_label_pixel_position;
 use super::labels::update_or_create_bounds_label;
 use super::labels::update_or_create_margin_label;
+use super::screen_space::boundary_edge_center;
+use super::screen_space::is_horizontally_balanced;
+use super::screen_space::is_vertically_balanced;
+use super::screen_space::margin_percentage;
+use super::screen_space::norm_to_viewport;
+use super::screen_space::normalized_to_world;
+use super::screen_space::screen_edge_center;
 use super::types::FitTargetGizmo;
 use super::types::FitTargetMargins;
 use super::types::FitTargetVisualizationConfig;
@@ -29,6 +25,185 @@ use crate::support::CameraBasis;
 use crate::support::ScreenSpaceBounds;
 use crate::support::extract_mesh_vertices;
 use crate::support::projection_aspect_ratio;
+
+/// Calculates the color for an edge based on balance state.
+const fn calculate_edge_color(
+    edge: Edge,
+    h_balanced: bool,
+    v_balanced: bool,
+    config: &FitTargetVisualizationConfig,
+) -> Color {
+    match edge {
+        Edge::Left | Edge::Right => {
+            if h_balanced {
+                config.balanced_color
+            } else {
+                config.unbalanced_color
+            }
+        },
+        Edge::Top | Edge::Bottom => {
+            if v_balanced {
+                config.balanced_color
+            } else {
+                config.unbalanced_color
+            }
+        },
+    }
+}
+
+/// Creates the 4 corners of the screen-aligned boundary rectangle in world space.
+fn create_screen_corners(
+    bounds: &ScreenSpaceBounds,
+    cam: &CameraBasis,
+    avg_depth: f32,
+    is_ortho: bool,
+) -> [Vec3; 4] {
+    [
+        normalized_to_world(
+            bounds.min_norm_x,
+            bounds.min_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
+        normalized_to_world(
+            bounds.max_norm_x,
+            bounds.min_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
+        normalized_to_world(
+            bounds.max_norm_x,
+            bounds.max_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
+        normalized_to_world(
+            bounds.min_norm_x,
+            bounds.max_norm_y,
+            cam,
+            avg_depth,
+            is_ortho,
+        ),
+    ]
+}
+
+/// Draws the boundary rectangle outline.
+fn draw_rectangle(
+    gizmos: &mut Gizmos<FitTargetGizmo>,
+    corners: &[Vec3; 4],
+    config: &FitTargetVisualizationConfig,
+) {
+    for i in 0..4 {
+        let next = (i + 1) % 4;
+        gizmos.line(corners[i], corners[next], config.rectangle_color);
+    }
+}
+
+/// Draws the silhouette polygon (convex hull of projected vertices) using gizmo lines.
+fn draw_silhouette(
+    gizmos: &mut Gizmos<FitTargetGizmo>,
+    vertices: &[Vec3],
+    cam: &CameraBasis,
+    avg_depth: f32,
+    is_ortho: bool,
+    color: Color,
+) {
+    let projected = project_vertices_to_2d(vertices, cam, is_ortho);
+    let hull = convex_hull_2d(&projected);
+
+    if hull.len() < 2 {
+        return;
+    }
+
+    for i in 0..hull.len() {
+        let next = (i + 1) % hull.len();
+        let start = normalized_to_world(hull[i].0, hull[i].1, cam, avg_depth, is_ortho);
+        let end = normalized_to_world(hull[next].0, hull[next].1, cam, avg_depth, is_ortho);
+        gizmos.line(start, end, color);
+    }
+}
+
+/// Draws margin lines from boundary edges to screen edges and updates margin labels.
+/// Returns the set of edges that had visible margins.
+#[allow(clippy::too_many_arguments)]
+fn draw_margin_lines_and_labels(
+    commands: &mut Commands,
+    gizmos: &mut Gizmos<FitTargetGizmo>,
+    label_query: &mut Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
+    bounds: &ScreenSpaceBounds,
+    cam_basis: &CameraBasis,
+    avg_depth: f32,
+    is_ortho: bool,
+    config: &FitTargetVisualizationConfig,
+    visualization_enabled: bool,
+    viewport_size: Option<Vec2>,
+) -> Vec<Edge> {
+    let h_balanced = is_horizontally_balanced(bounds, crate::fit::TOLERANCE);
+    let v_balanced = is_vertically_balanced(bounds, crate::fit::TOLERANCE);
+
+    let mut visible_edges: Vec<Edge> = Vec::new();
+
+    for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
+        let Some((boundary_x, boundary_y)) = boundary_edge_center(bounds, edge) else {
+            continue;
+        };
+        visible_edges.push(edge);
+
+        let (screen_x, screen_y) = screen_edge_center(bounds, edge);
+        let boundary_pos =
+            normalized_to_world(boundary_x, boundary_y, cam_basis, avg_depth, is_ortho);
+        let screen_pos = normalized_to_world(screen_x, screen_y, cam_basis, avg_depth, is_ortho);
+
+        let color = calculate_edge_color(edge, h_balanced, v_balanced, config);
+        gizmos.line(boundary_pos, screen_pos, color);
+
+        if visualization_enabled {
+            let Some(vp) = viewport_size else {
+                continue;
+            };
+            let percentage = margin_percentage(bounds, edge);
+            let text = format!("{percentage:.3}%");
+            let label_screen_pos = calculate_label_pixel_position(edge, bounds, vp);
+
+            update_or_create_margin_label(
+                commands,
+                label_query,
+                edge,
+                text,
+                color,
+                label_screen_pos,
+                vp,
+            );
+        }
+    }
+
+    visible_edges
+}
+
+/// Removes labels for edges no longer visible or when visualization is disabled.
+#[allow(clippy::type_complexity)]
+fn cleanup_stale_labels(
+    commands: &mut Commands,
+    label_query: &Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
+    bounds_label_query: &Query<(Entity, &mut Node), (With<BoundsLabel>, Without<MarginLabel>)>,
+    visible_edges: &[Edge],
+    visualization_enabled: bool,
+) {
+    for (entity, label, _, _, _) in label_query {
+        if !visualization_enabled || !visible_edges.contains(&label.edge) {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    if !visualization_enabled {
+        for (entity, _) in bounds_label_query {
+            commands.entity(entity).despawn();
+        }
+    }
+}
 
 /// Draws screen-aligned bounds for the current fit target.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -87,7 +262,9 @@ pub fn draw_fit_target_bounds(
 
     let avg_depth = depths.avg_depth();
     let is_ortho = matches!(projection, Projection::Orthographic(_));
+    let viewport_size = cam.logical_viewport_size();
 
+    // Update margin percentages on camera entity for BRP inspection
     commands.entity(camera_entity).insert(FitTargetMargins {
         left_pct:   margin_percentage(&bounds, Edge::Left),
         right_pct:  margin_percentage(&bounds, Edge::Right),
@@ -95,15 +272,15 @@ pub fn draw_fit_target_bounds(
         bottom_pct: margin_percentage(&bounds, Edge::Bottom),
     });
 
-    let rect_corners_world = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);
-    draw_rectangle(&mut gizmos, &rect_corners_world, &config);
+    // Bounding rectangle
+    let corners = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);
+    draw_rectangle(&mut gizmos, &corners, &config);
 
+    // Silhouette convex hull
     if visualization_enabled {
-        let projected = project_vertices_to_2d(&vertices, &cam_basis, is_ortho);
-        let hull = convex_hull_2d(&projected);
-        draw_silhouette_polygon(
+        draw_silhouette(
             &mut gizmos,
-            &hull,
+            &vertices,
             &cam_basis,
             avg_depth,
             is_ortho,
@@ -111,13 +288,14 @@ pub fn draw_fit_target_bounds(
         );
     }
 
-    if visualization_enabled && let Some(viewport_size) = cam.logical_viewport_size() {
+    // "Screen space bounds" label
+    if visualization_enabled && let Some(vp) = viewport_size {
         let upper_left = norm_to_viewport(
             bounds.min_norm_x,
             bounds.max_norm_y,
             bounds.half_extent_x,
             bounds.half_extent_y,
-            viewport_size,
+            vp,
         );
         update_or_create_bounds_label(
             &mut commands,
@@ -126,56 +304,26 @@ pub fn draw_fit_target_bounds(
         );
     }
 
-    let h_balanced = is_horizontally_balanced(&bounds, crate::fit::TOLERANCE);
-    let v_balanced = is_vertically_balanced(&bounds, crate::fit::TOLERANCE);
+    // Margin lines + labels
+    let visible_edges = draw_margin_lines_and_labels(
+        &mut commands,
+        &mut gizmos,
+        &mut label_query,
+        &bounds,
+        &cam_basis,
+        avg_depth,
+        is_ortho,
+        &config,
+        visualization_enabled,
+        viewport_size,
+    );
 
-    let mut visible_edges: Vec<Edge> = Vec::new();
-
-    for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-        if let Some((boundary_x, boundary_y)) = boundary_edge_center(&bounds, edge) {
-            visible_edges.push(edge);
-
-            let (screen_x, screen_y) = screen_edge_center(&bounds, edge);
-
-            let boundary_pos =
-                normalized_to_world(boundary_x, boundary_y, &cam_basis, avg_depth, is_ortho);
-            let screen_pos =
-                normalized_to_world(screen_x, screen_y, &cam_basis, avg_depth, is_ortho);
-
-            let color = calculate_edge_color(edge, h_balanced, v_balanced, &config);
-            gizmos.line(boundary_pos, screen_pos, color);
-
-            if visualization_enabled {
-                let percentage = margin_percentage(&bounds, edge);
-                let text = format!("{percentage:.3}%");
-
-                let Some(viewport_size) = cam.logical_viewport_size() else {
-                    continue;
-                };
-                let label_screen_pos = calculate_label_pixel_position(edge, &bounds, viewport_size);
-
-                update_or_create_margin_label(
-                    &mut commands,
-                    &mut label_query,
-                    edge,
-                    text,
-                    color,
-                    label_screen_pos,
-                    viewport_size,
-                );
-            }
-        }
-    }
-
-    for (entity, label, _, _, _) in &label_query {
-        if !visualization_enabled || !visible_edges.contains(&label.edge) {
-            commands.entity(entity).despawn();
-        }
-    }
-
-    if !visualization_enabled {
-        for (entity, _) in &bounds_label_query {
-            commands.entity(entity).despawn();
-        }
-    }
+    // Remove stale labels
+    cleanup_stale_labels(
+        &mut commands,
+        &label_query,
+        &bounds_label_query,
+        &visible_edges,
+        visualization_enabled,
+    );
 }
