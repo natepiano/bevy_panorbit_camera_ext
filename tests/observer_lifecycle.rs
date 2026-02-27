@@ -236,13 +236,8 @@ fn zoom_to_fit_zero_duration_emits_zoom_begin_then_zoom_end_without_animation_qu
 
     let (camera_entity, target_entity) = spawn_fit_camera_and_target(&mut app);
 
-    app.world_mut().trigger(ZoomToFit::new(
-        camera_entity,
-        target_entity,
-        0.1,
-        Duration::ZERO,
-        EaseFunction::Linear,
-    ));
+    app.world_mut()
+        .trigger(ZoomToFit::new(camera_entity, target_entity).easing(EaseFunction::Linear));
     app.update();
 
     let log = app.world().resource::<EventLog>();
@@ -262,15 +257,8 @@ fn animate_to_fit_zero_duration_emits_animation_begin_then_end_without_animation
 
     let (camera_entity, target_entity) = spawn_fit_camera_and_target(&mut app);
 
-    app.world_mut().trigger(AnimateToFit::new(
-        camera_entity,
-        target_entity,
-        0.0,
-        0.0,
-        0.1,
-        Duration::ZERO,
-        EaseFunction::Linear,
-    ));
+    app.world_mut()
+        .trigger(AnimateToFit::new(camera_entity, target_entity).easing(EaseFunction::Linear));
     app.update();
 
     let log = app.world().resource::<EventLog>();

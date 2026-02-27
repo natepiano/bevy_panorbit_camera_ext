@@ -265,12 +265,9 @@ pub fn draw_fit_target_bounds(
     let viewport_size = cam.logical_viewport_size();
 
     // Update margin percentages on camera entity for BRP inspection
-    commands.entity(camera_entity).insert(FitTargetMargins {
-        left_pct:   margin_percentage(&bounds, Edge::Left),
-        right_pct:  margin_percentage(&bounds, Edge::Right),
-        top_pct:    margin_percentage(&bounds, Edge::Top),
-        bottom_pct: margin_percentage(&bounds, Edge::Bottom),
-    });
+    commands
+        .entity(camera_entity)
+        .insert(FitTargetMargins::from_bounds(&bounds));
 
     // Bounding rectangle
     let corners = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);

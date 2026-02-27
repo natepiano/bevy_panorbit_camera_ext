@@ -46,24 +46,21 @@ use std::time::Duration;
 use bevy::math::curve::easing::EaseFunction;
 
 // Zoom to fit at current orientation (e.g., user presses "Z" to frame selection)
-commands.trigger(ZoomToFit::new(
-    camera_entity,
-    target_entity,
-    DEFAULT_MARGIN,
-    Duration::from_millis(500),
-    EaseFunction::CubicOut,
-));
+commands.trigger(
+    ZoomToFit::new(camera_entity, target_entity)
+        .margin(DEFAULT_MARGIN)
+        .duration(Duration::from_millis(500)),
+);
 
 // Animate to a specific orientation and fit (e.g., "home" button returns to front view)
-commands.trigger(AnimateToFit::new(
-    camera_entity,
-    target_entity,
-    0.0,   // yaw
-    0.0,   // pitch
-    DEFAULT_MARGIN,
-    Duration::from_millis(1200),
-    EaseFunction::QuadraticOut,
-));
+commands.trigger(
+    AnimateToFit::new(camera_entity, target_entity)
+        .yaw(0.0)
+        .pitch(0.0)
+        .margin(DEFAULT_MARGIN)
+        .duration(Duration::from_millis(1200))
+        .easing(EaseFunction::QuadraticOut),
+);
 ```
 
 ### `PlayAnimation`
@@ -95,19 +92,15 @@ Sets the debug visualization target entity on a camera without triggering any zo
 ```rust
 use std::time::Duration;
 
-use bevy::math::curve::easing::EaseFunction;
-
 // Preview what the debug visualization looks like for this entity
 commands.trigger(SetFitTarget::new(camera_entity, target_entity));
 
 // Later, when ready, trigger the actual zoom
-commands.trigger(ZoomToFit::new(
-    camera_entity,
-    target_entity,
-    DEFAULT_MARGIN,
-    Duration::from_millis(500),
-    EaseFunction::CubicOut,
-));
+commands.trigger(
+    ZoomToFit::new(camera_entity, target_entity)
+        .margin(DEFAULT_MARGIN)
+        .duration(Duration::from_millis(500)),
+);
 ```
 
 ### Lifecycle Events

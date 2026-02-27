@@ -121,20 +121,29 @@ pub struct ZoomToFit {
 }
 
 impl ZoomToFit {
-    pub const fn new(
-        camera_entity: Entity,
-        target: Entity,
-        margin: f32,
-        duration: Duration,
-        easing: EaseFunction,
-    ) -> Self {
+    pub const fn new(camera_entity: Entity, target: Entity) -> Self {
         Self {
             camera_entity,
             target,
-            margin,
-            duration,
-            easing,
+            margin: 0.1,
+            duration: Duration::ZERO,
+            easing: EaseFunction::CubicOut,
         }
+    }
+
+    pub const fn margin(mut self, margin: f32) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    pub const fn duration(mut self, duration: Duration) -> Self {
+        self.duration = duration;
+        self
+    }
+
+    pub const fn easing(mut self, easing: EaseFunction) -> Self {
+        self.easing = easing;
+        self
     }
 }
 
@@ -199,23 +208,40 @@ pub struct AnimateToFit {
 }
 
 impl AnimateToFit {
-    pub const fn new(
-        camera_entity: Entity,
-        target: Entity,
-        yaw: f32,
-        pitch: f32,
-        margin: f32,
-        duration: Duration,
-        easing: EaseFunction,
-    ) -> Self {
+    pub const fn new(camera_entity: Entity, target: Entity) -> Self {
         Self {
             camera_entity,
             target,
-            yaw,
-            pitch,
-            margin,
-            duration,
-            easing,
+            yaw: 0.0,
+            pitch: 0.0,
+            margin: 0.1,
+            duration: Duration::ZERO,
+            easing: EaseFunction::CubicOut,
         }
+    }
+
+    pub const fn yaw(mut self, yaw: f32) -> Self {
+        self.yaw = yaw;
+        self
+    }
+
+    pub const fn pitch(mut self, pitch: f32) -> Self {
+        self.pitch = pitch;
+        self
+    }
+
+    pub const fn margin(mut self, margin: f32) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    pub const fn duration(mut self, duration: Duration) -> Self {
+        self.duration = duration;
+        self
+    }
+
+    pub const fn easing(mut self, easing: EaseFunction) -> Self {
+        self.easing = easing;
+        self
     }
 }

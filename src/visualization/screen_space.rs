@@ -24,27 +24,37 @@ fn screen_edges_normalized(bounds: &ScreenSpaceBounds) -> (f32, f32, f32, f32) {
     )
 }
 
+/// Returns the clamped vertical center of the bounds within the screen edges.
+fn clamped_center_y(bounds: &ScreenSpaceBounds, bottom_edge: f32, top_edge: f32) -> f32 {
+    (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5
+}
+
+/// Returns the clamped horizontal center of the bounds within the screen edges.
+fn clamped_center_x(bounds: &ScreenSpaceBounds, left_edge: f32, right_edge: f32) -> f32 {
+    (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5
+}
+
 /// Returns the center of a boundary edge in normalized space.
 pub fn boundary_edge_center(bounds: &ScreenSpaceBounds, edge: Edge) -> Option<(f32, f32)> {
     let (left_edge, right_edge, top_edge, bottom_edge) = screen_edges_normalized(bounds);
 
     match edge {
-        Edge::Left if bounds.min_norm_x > left_edge => {
-            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
-            Some((bounds.min_norm_x, y))
-        },
-        Edge::Right if bounds.max_norm_x < right_edge => {
-            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
-            Some((bounds.max_norm_x, y))
-        },
-        Edge::Top if bounds.max_norm_y < top_edge => {
-            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
-            Some((x, bounds.max_norm_y))
-        },
-        Edge::Bottom if bounds.min_norm_y > bottom_edge => {
-            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
-            Some((x, bounds.min_norm_y))
-        },
+        Edge::Left if bounds.min_norm_x > left_edge => Some((
+            bounds.min_norm_x,
+            clamped_center_y(bounds, bottom_edge, top_edge),
+        )),
+        Edge::Right if bounds.max_norm_x < right_edge => Some((
+            bounds.max_norm_x,
+            clamped_center_y(bounds, bottom_edge, top_edge),
+        )),
+        Edge::Top if bounds.max_norm_y < top_edge => Some((
+            clamped_center_x(bounds, left_edge, right_edge),
+            bounds.max_norm_y,
+        )),
+        Edge::Bottom if bounds.min_norm_y > bottom_edge => Some((
+            clamped_center_x(bounds, left_edge, right_edge),
+            bounds.min_norm_y,
+        )),
         _ => None,
     }
 }
@@ -54,22 +64,10 @@ pub fn screen_edge_center(bounds: &ScreenSpaceBounds, edge: Edge) -> (f32, f32) 
     let (left_edge, right_edge, top_edge, bottom_edge) = screen_edges_normalized(bounds);
 
     match edge {
-        Edge::Left => {
-            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
-            (left_edge, y)
-        },
-        Edge::Right => {
-            let y = (bounds.min_norm_y.max(bottom_edge) + bounds.max_norm_y.min(top_edge)) * 0.5;
-            (right_edge, y)
-        },
-        Edge::Top => {
-            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
-            (x, top_edge)
-        },
-        Edge::Bottom => {
-            let x = (bounds.min_norm_x.max(left_edge) + bounds.max_norm_x.min(right_edge)) * 0.5;
-            (x, bottom_edge)
-        },
+        Edge::Left => (left_edge, clamped_center_y(bounds, bottom_edge, top_edge)),
+        Edge::Right => (right_edge, clamped_center_y(bounds, bottom_edge, top_edge)),
+        Edge::Top => (clamped_center_x(bounds, left_edge, right_edge), top_edge),
+        Edge::Bottom => (clamped_center_x(bounds, left_edge, right_edge), bottom_edge),
     }
 }
 

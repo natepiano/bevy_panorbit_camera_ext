@@ -387,15 +387,13 @@ fn initial_fit_to_scene(
     if meshes.get(&mesh3d.0).is_none() {
         return;
     }
-    commands.trigger(AnimateToFit::new(
-        scene.camera,
-        scene.scene_bounds,
-        CAMERA_START_YAW,
-        CAMERA_START_PITCH,
-        ZOOM_MARGIN_SCENE,
-        Duration::ZERO,
-        EaseFunction::QuadraticInOut,
-    ));
+    commands.trigger(
+        AnimateToFit::new(scene.camera, scene.scene_bounds)
+            .yaw(CAMERA_START_YAW)
+            .pitch(CAMERA_START_PITCH)
+            .margin(ZOOM_MARGIN_SCENE)
+            .easing(EaseFunction::QuadraticInOut),
+    );
     next_state.set(AppState::Running);
 }
 
@@ -412,13 +410,12 @@ fn on_mesh_clicked(
 
     let clicked = click.entity;
     commands.entity(clicked).insert(Selected);
-    commands.trigger(ZoomToFit::new(
-        scene.camera,
-        clicked,
-        ZOOM_MARGIN_MESH,
-        Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0),
-        active_easing.0,
-    ));
+    commands.trigger(
+        ZoomToFit::new(scene.camera, clicked)
+            .margin(ZOOM_MARGIN_MESH)
+            .duration(Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0))
+            .easing(active_easing.0),
+    );
 }
 
 fn on_ground_clicked(
@@ -432,13 +429,12 @@ fn on_ground_clicked(
         commands.entity(entity).remove::<Selected>();
     }
 
-    commands.trigger(ZoomToFit::new(
-        scene.camera,
-        scene.scene_bounds,
-        ZOOM_MARGIN_SCENE,
-        Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0),
-        active_easing.0,
-    ));
+    commands.trigger(
+        ZoomToFit::new(scene.camera, scene.scene_bounds)
+            .margin(ZOOM_MARGIN_SCENE)
+            .duration(Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0))
+            .easing(active_easing.0),
+    );
 }
 
 fn on_below_clicked(
@@ -452,15 +448,14 @@ fn on_below_clicked(
         commands.entity(entity).remove::<Selected>();
     }
 
-    commands.trigger(AnimateToFit::new(
-        scene.camera,
-        scene.scene_bounds,
-        CAMERA_START_YAW,
-        CAMERA_START_PITCH,
-        ZOOM_MARGIN_SCENE,
-        Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0),
-        active_easing.0,
-    ));
+    commands.trigger(
+        AnimateToFit::new(scene.camera, scene.scene_bounds)
+            .yaw(CAMERA_START_YAW)
+            .pitch(CAMERA_START_PITCH)
+            .margin(ZOOM_MARGIN_SCENE)
+            .duration(Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0))
+            .easing(active_easing.0),
+    );
 }
 
 fn on_mesh_dragged(drag: On<Pointer<Drag>>, mut transforms: Query<&mut Transform>) {
@@ -611,15 +606,14 @@ fn animate_fit_to_scene(
         return;
     }
 
-    commands.trigger(AnimateToFit::new(
-        scene.camera,
-        scene.scene_bounds,
-        CAMERA_START_YAW,
-        CAMERA_START_PITCH,
-        ZOOM_MARGIN_SCENE,
-        Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0),
-        easing.0,
-    ));
+    commands.trigger(
+        AnimateToFit::new(scene.camera, scene.scene_bounds)
+            .yaw(CAMERA_START_YAW)
+            .pitch(CAMERA_START_PITCH)
+            .margin(ZOOM_MARGIN_SCENE)
+            .duration(Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0))
+            .easing(easing.0),
+    );
 }
 
 /// Toggles between perspective and orthographic projection, then re-fits the scene.
@@ -641,15 +635,14 @@ fn toggle_projection(
     // Deferred fit: projection was changed last frame, `PanOrbitCamera` has now synced.
     if *pending_fit {
         *pending_fit = false;
-        commands.trigger(AnimateToFit::new(
-            scene.camera,
-            scene.scene_bounds,
-            CAMERA_START_YAW,
-            CAMERA_START_PITCH,
-            ZOOM_MARGIN_SCENE,
-            Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0),
-            active_easing.0,
-        ));
+        commands.trigger(
+            AnimateToFit::new(scene.camera, scene.scene_bounds)
+                .yaw(CAMERA_START_YAW)
+                .pitch(CAMERA_START_PITCH)
+                .margin(ZOOM_MARGIN_SCENE)
+                .duration(Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0))
+                .easing(active_easing.0),
+        );
         return;
     }
 

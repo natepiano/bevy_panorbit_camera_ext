@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::support::ScreenSpaceBounds;
+
 /// Gizmo config group for fit target visualization (screen-aligned overlay).
 /// Toggle via `GizmoConfigStore::config_mut::<FitTargetGizmo>().enabled`
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -15,6 +17,21 @@ pub struct FitTargetMargins {
     pub right_pct:  f32,
     pub top_pct:    f32,
     pub bottom_pct: f32,
+}
+
+impl FitTargetMargins {
+    /// Constructs margin percentages from screen-space bounds, computing
+    /// screen dimensions once rather than per-edge.
+    pub fn from_bounds(bounds: &ScreenSpaceBounds) -> Self {
+        let screen_width = 2.0 * bounds.half_extent_x;
+        let screen_height = 2.0 * bounds.half_extent_y;
+        Self {
+            left_pct:   (bounds.left_margin / screen_width) * 100.0,
+            right_pct:  (bounds.right_margin / screen_width) * 100.0,
+            top_pct:    (bounds.top_margin / screen_height) * 100.0,
+            bottom_pct: (bounds.bottom_margin / screen_height) * 100.0,
+        }
+    }
 }
 
 /// Configuration for fit target visualization colors and appearance.
