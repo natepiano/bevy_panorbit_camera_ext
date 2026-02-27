@@ -4,6 +4,10 @@ use std::time::Duration;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
+use bevy_panorbit_camera_ext::AnimateToFit;
+use bevy_panorbit_camera_ext::AnimationBegin;
+use bevy_panorbit_camera_ext::AnimationCancelled;
+use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveList;
 use bevy_panorbit_camera_ext::CurrentFitTarget;
@@ -12,10 +16,6 @@ use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::SetFitTarget;
 use bevy_panorbit_camera_ext::SmoothnessStash;
-use bevy_panorbit_camera_ext::AnimateToFit;
-use bevy_panorbit_camera_ext::AnimationBegin;
-use bevy_panorbit_camera_ext::AnimationCancelled;
-use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::ZoomBegin;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
@@ -199,9 +199,11 @@ fn direct_camera_move_list_insertion_stashes_and_disables_smoothness() {
     camera.orbit_smoothness = 0.4;
 
     let camera_entity = app.world_mut().spawn(camera).id();
-    app.world_mut().entity_mut(camera_entity).insert(CameraMoveList::new(
-        VecDeque::from([make_move(Duration::from_millis(500))]),
-    ));
+    app.world_mut()
+        .entity_mut(camera_entity)
+        .insert(CameraMoveList::new(VecDeque::from([make_move(
+            Duration::from_millis(500),
+        )])));
     app.update();
 
     let stash = *app
@@ -240,7 +242,10 @@ fn zoom_to_fit_zero_duration_emits_zoom_begin_then_zoom_end_without_animation_qu
     app.update();
 
     let log = app.world().resource::<EventLog>();
-    assert_eq!(log.0, vec![LifecycleEvent::ZoomBegin, LifecycleEvent::ZoomEnd]);
+    assert_eq!(
+        log.0,
+        vec![LifecycleEvent::ZoomBegin, LifecycleEvent::ZoomEnd]
+    );
     assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
 }
 
@@ -289,12 +294,12 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
         .id();
 
     let first_move = CameraMove::ToOrbit {
-        focus: Vec3::new(1.0, 2.0, 3.0),
-        yaw: 0.4,
-        pitch: -0.2,
-        radius: 6.0,
+        focus:    Vec3::new(1.0, 2.0, 3.0),
+        yaw:      0.4,
+        pitch:    -0.2,
+        radius:   6.0,
         duration: Duration::from_millis(800),
-        easing: EaseFunction::Linear,
+        easing:   EaseFunction::Linear,
     };
     app.world_mut().trigger(PlayAnimation::new(
         camera_entity,
@@ -361,20 +366,20 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
         .id();
 
     let first_move = CameraMove::ToOrbit {
-        focus: Vec3::new(1.0, 0.0, 0.0),
-        yaw: 0.1,
-        pitch: 0.2,
-        radius: 4.0,
+        focus:    Vec3::new(1.0, 0.0, 0.0),
+        yaw:      0.1,
+        pitch:    0.2,
+        radius:   4.0,
         duration: Duration::from_millis(900),
-        easing: EaseFunction::Linear,
+        easing:   EaseFunction::Linear,
     };
     let final_move = CameraMove::ToOrbit {
-        focus: Vec3::new(9.0, 8.0, 7.0),
-        yaw: 0.9,
-        pitch: -0.4,
-        radius: 11.0,
+        focus:    Vec3::new(9.0, 8.0, 7.0),
+        yaw:      0.9,
+        pitch:    -0.4,
+        radius:   11.0,
         duration: Duration::from_millis(900),
-        easing: EaseFunction::Linear,
+        easing:   EaseFunction::Linear,
     };
     app.world_mut().trigger(PlayAnimation::new(
         camera_entity,

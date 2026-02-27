@@ -47,7 +47,7 @@ pub struct AnimationCancelled {
 pub struct CameraMoveBegin {
     #[event_target]
     pub camera_entity: Entity,
-    pub camera_move: CameraMove,
+    pub camera_move:   CameraMove,
 }
 
 /// Fired when an individual `CameraMove` completes.
@@ -56,7 +56,7 @@ pub struct CameraMoveBegin {
 pub struct CameraMoveEnd {
     #[event_target]
     pub camera_entity: Entity,
-    pub camera_move: CameraMove,
+    pub camera_move:   CameraMove,
 }
 
 // ============================================================================
@@ -70,9 +70,9 @@ pub struct ZoomBegin {
     #[event_target]
     pub camera_entity: Entity,
     pub target_entity: Entity,
-    pub margin: f32,
-    pub duration: Duration,
-    pub easing: EaseFunction,
+    pub margin:        f32,
+    pub duration:      Duration,
+    pub easing:        EaseFunction,
 }
 
 /// Fired when a `ZoomToFit` operation completes (both animated and instant).
@@ -82,9 +82,9 @@ pub struct ZoomEnd {
     #[event_target]
     pub camera_entity: Entity,
     pub target_entity: Entity,
-    pub margin: f32,
-    pub duration: Duration,
-    pub easing: EaseFunction,
+    pub margin:        f32,
+    pub duration:      Duration,
+    pub easing:        EaseFunction,
 }
 
 /// Fired when a `ZoomToFit` animation is cancelled by external camera input.
@@ -114,10 +114,10 @@ pub struct ZoomCancelled {
 pub struct ZoomToFit {
     #[event_target]
     pub camera_entity: Entity,
-    pub target: Entity,
-    pub margin: f32,
-    pub duration: Duration,
-    pub easing: EaseFunction,
+    pub target:        Entity,
+    pub margin:        f32,
+    pub duration:      Duration,
+    pub easing:        EaseFunction,
 }
 
 impl ZoomToFit {
@@ -144,7 +144,7 @@ impl ZoomToFit {
 pub struct PlayAnimation {
     #[event_target]
     pub camera_entity: Entity,
-    pub moves: VecDeque<CameraMove>,
+    pub moves:         VecDeque<CameraMove>,
 }
 
 impl PlayAnimation {
@@ -164,7 +164,7 @@ impl PlayAnimation {
 pub struct SetFitTarget {
     #[event_target]
     pub camera_entity: Entity,
-    pub target: Entity,
+    pub target:        Entity,
 }
 
 impl SetFitTarget {
@@ -190,12 +190,12 @@ impl SetFitTarget {
 pub struct AnimateToFit {
     #[event_target]
     pub camera_entity: Entity,
-    pub target: Entity,
-    pub yaw: f32,
-    pub pitch: f32,
-    pub margin: f32,
-    pub duration: Duration,
-    pub easing: EaseFunction,
+    pub target:        Entity,
+    pub yaw:           f32,
+    pub pitch:         f32,
+    pub margin:        f32,
+    pub duration:      Duration,
+    pub easing:        EaseFunction,
 }
 
 impl AnimateToFit {

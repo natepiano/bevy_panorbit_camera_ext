@@ -19,8 +19,8 @@ use crate::events::SetFitTarget;
 use crate::events::ZoomBegin;
 use crate::events::ZoomEnd;
 use crate::events::ZoomToFit;
-use crate::fit::calculate_fit;
 use crate::fit::FitSolution;
+use crate::fit::calculate_fit;
 use crate::support::extract_mesh_vertices;
 
 /// Ensures camera smoothness is stashed once and disabled while animations are active.
@@ -32,8 +32,8 @@ fn ensure_animation_smoothness(
 ) {
     if !has_existing_stash {
         let stash = SmoothnessStash {
-            zoom: camera.zoom_smoothness,
-            pan: camera.pan_smoothness,
+            zoom:  camera.zoom_smoothness,
+            pan:   camera.pan_smoothness,
             orbit: camera.orbit_smoothness,
         };
         commands.entity(entity).insert(stash);
@@ -207,12 +207,7 @@ pub fn on_play_animation(
         });
     }
 
-    ensure_animation_smoothness(
-        &mut commands,
-        entity,
-        &mut camera,
-        existing_stash.is_some(),
-    );
+    ensure_animation_smoothness(&mut commands, entity, &mut camera, existing_stash.is_some());
 
     // Add the animation component
     commands
@@ -232,12 +227,7 @@ pub fn on_camera_move_list_added(
         return;
     };
 
-    ensure_animation_smoothness(
-        &mut commands,
-        entity,
-        &mut camera,
-        existing_stash.is_some(),
-    );
+    ensure_animation_smoothness(&mut commands, entity, &mut camera, existing_stash.is_some());
 }
 
 /// Observer for `SetFitTarget` event - sets the target entity for fit visualization

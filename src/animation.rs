@@ -29,20 +29,20 @@ pub enum CameraMove {
     /// The animation system decomposes this into orbital parameters internally.
     ToPosition {
         translation: Vec3,
-        focus: Vec3,
-        duration: Duration,
-        easing: EaseFunction,
+        focus:       Vec3,
+        duration:    Duration,
+        easing:      EaseFunction,
     },
     /// Animate to orbital parameters around a focus point.
     /// Avoids gimbal lock at extreme pitch angles (±PI/2) where world-space
     /// decomposition via `atan2` loses yaw information.
     ToOrbit {
-        focus: Vec3,
-        yaw: f32,
-        pitch: f32,
-        radius: f32,
+        focus:    Vec3,
+        yaw:      f32,
+        pitch:    f32,
+        radius:   f32,
         duration: Duration,
-        easing: EaseFunction,
+        easing:   EaseFunction,
     },
 }
 
@@ -53,9 +53,7 @@ impl CameraMove {
         }
     }
 
-    pub fn duration_ms(&self) -> f32 {
-        self.duration().as_secs_f32() * 1000.0
-    }
+    pub fn duration_ms(&self) -> f32 { self.duration().as_secs_f32() * 1000.0 }
 
     pub const fn easing(&self) -> EaseFunction {
         match self {
@@ -118,16 +116,16 @@ const EXTERNAL_INPUT_TOLERANCE: f32 = 1e-6;
 #[derive(Clone, Reflect, Default, Debug)]
 enum MoveState {
     InProgress {
-        elapsed_ms: f32,
-        start_focus: Vec3,
-        start_pitch: f32,
-        start_radius: f32,
-        start_yaw: f32,
+        elapsed_ms:          f32,
+        start_focus:         Vec3,
+        start_pitch:         f32,
+        start_radius:        f32,
+        start_yaw:           f32,
         /// Values written by the animation last frame — if the camera's current
         /// values differ, external input occurred and the animation should cancel.
-        last_written_focus: Vec3,
-        last_written_yaw: f32,
-        last_written_pitch: f32,
+        last_written_focus:  Vec3,
+        last_written_yaw:    f32,
+        last_written_pitch:  f32,
         last_written_radius: f32,
     },
     #[default]
@@ -174,7 +172,7 @@ impl MoveState {
 #[reflect(Component, Default)]
 pub struct CameraMoveList {
     pub moves: VecDeque<CameraMove>,
-    state: MoveState,
+    state:     MoveState,
 }
 
 impl CameraMoveList {
@@ -234,9 +232,9 @@ pub fn process_camera_move_list(
                 commands.trigger(ZoomEnd {
                     camera_entity: entity,
                     target_entity: marker.target_entity,
-                    margin: marker.margin,
-                    duration: marker.duration,
-                    easing: marker.easing,
+                    margin:        marker.margin,
+                    duration:      marker.duration,
+                    easing:        marker.easing,
                 });
             } else {
                 commands.trigger(AnimationEnd {
@@ -281,9 +279,9 @@ pub fn process_camera_move_list(
                         commands.trigger(ZoomEnd {
                             camera_entity: entity,
                             target_entity: marker.target_entity,
-                            margin: marker.margin,
-                            duration: marker.duration,
-                            easing: marker.easing,
+                            margin:        marker.margin,
+                            duration:      marker.duration,
+                            easing:        marker.easing,
                         });
                     } else {
                         commands.trigger(AnimationEnd {
@@ -301,7 +299,7 @@ pub fn process_camera_move_list(
                     if zoom_marker.is_none() {
                         commands.trigger(CameraMoveBegin {
                             camera_entity: entity,
-                            camera_move: current_move.clone(),
+                            camera_move:   current_move.clone(),
                         });
                     }
 
@@ -315,7 +313,7 @@ pub fn process_camera_move_list(
                     if zoom_marker.is_none() {
                         commands.trigger(CameraMoveEnd {
                             camera_entity: entity,
-                            camera_move: current_move,
+                            camera_move:   current_move,
                         });
                     }
                     queue.moves.pop_front();
@@ -324,21 +322,21 @@ pub fn process_camera_move_list(
 
                 // Transition to InProgress with captured starting orbital parameters
                 queue.state = MoveState::InProgress {
-                    elapsed_ms: 0.0,
-                    start_focus: pan_orbit.target_focus,
-                    start_radius: pan_orbit.target_radius,
-                    start_yaw: pan_orbit.target_yaw,
-                    start_pitch: pan_orbit.target_pitch,
-                    last_written_focus: pan_orbit.target_focus,
-                    last_written_yaw: pan_orbit.target_yaw,
-                    last_written_pitch: pan_orbit.target_pitch,
+                    elapsed_ms:          0.0,
+                    start_focus:         pan_orbit.target_focus,
+                    start_radius:        pan_orbit.target_radius,
+                    start_yaw:           pan_orbit.target_yaw,
+                    start_pitch:         pan_orbit.target_pitch,
+                    last_written_focus:  pan_orbit.target_focus,
+                    last_written_yaw:    pan_orbit.target_yaw,
+                    last_written_pitch:  pan_orbit.target_pitch,
                     last_written_radius: pan_orbit.target_radius,
                 };
 
                 if zoom_marker.is_none() {
                     commands.trigger(CameraMoveBegin {
                         camera_entity: entity,
-                        camera_move: current_move.clone(),
+                        camera_move:   current_move.clone(),
                     });
                 }
             },
@@ -412,7 +410,7 @@ pub fn process_camera_move_list(
                     if zoom_marker.is_none() {
                         commands.trigger(CameraMoveEnd {
                             camera_entity: entity,
-                            camera_move: current_move.clone(),
+                            camera_move:   current_move.clone(),
                         });
                     }
                     queue.moves.pop_front();

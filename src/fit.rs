@@ -23,9 +23,7 @@ pub const MIN_MARGIN: f32 = 0.0;
 pub const MAX_MARGIN: f32 = 0.9999;
 /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
 /// For example, a margin of 0.08 returns 1.087 (8% margin)
-pub const fn zoom_margin_multiplier(margin: f32) -> f32 {
-    1.0 / (1.0 - margin)
-}
+pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
 
 // ============================================================================
 // Types
@@ -44,7 +42,7 @@ pub enum Edge {
 #[derive(Debug, Clone, Copy)]
 pub struct FitSolution {
     pub radius: f32,
-    pub focus: Vec3,
+    pub focus:  Vec3,
 }
 
 /// Explicit fit calculation failures.
@@ -60,7 +58,9 @@ impl fmt::Display for FitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoViewport => write!(f, "camera viewport size is unavailable"),
-            Self::PointsBehindCamera => write!(f, "all candidate fits project points behind camera"),
+            Self::PointsBehindCamera => {
+                write!(f, "all candidate fits project points behind camera")
+            },
         }
     }
 }
@@ -240,7 +240,7 @@ pub fn calculate_fit(
             );
             return Ok(FitSolution {
                 radius: best_radius,
-                focus: best_focus,
+                focus:  best_focus,
             });
         }
     }
@@ -255,7 +255,7 @@ pub fn calculate_fit(
 
     Ok(FitSolution {
         radius: best_radius,
-        focus: best_focus,
+        focus:  best_focus,
     })
 }
 
@@ -421,7 +421,15 @@ mod tests {
             Vec3::new(1.0, 1.0, 0.0),
         ];
 
-        let result = calculate_fit(&points, Vec3::ZERO, 0.0, 0.0, f32::NAN, &projection, &camera);
+        let result = calculate_fit(
+            &points,
+            Vec3::ZERO,
+            0.0,
+            0.0,
+            f32::NAN,
+            &projection,
+            &camera,
+        );
 
         assert!(result.is_ok());
     }

@@ -36,9 +36,9 @@ pub struct CurrentFitTarget(pub Entity);
 #[derive(Component)]
 pub struct ZoomAnimationMarker {
     pub target_entity: Entity,
-    pub margin: f32,
-    pub duration: Duration,
-    pub easing: EaseFunction,
+    pub margin:        f32,
+    pub duration:      Duration,
+    pub easing:        EaseFunction,
 }
 
 /// Component that stores camera smoothness values during animations.
@@ -49,7 +49,7 @@ pub struct ZoomAnimationMarker {
 /// automatically restored via an observer.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SmoothnessStash {
-    pub zoom: f32,
-    pub pan: f32,
+    pub zoom:  f32,
+    pub pan:   f32,
     pub orbit: f32,
 }
