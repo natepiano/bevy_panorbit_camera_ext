@@ -17,22 +17,54 @@ use labels::MarginLabel;
 use labels::cleanup_margin_labels;
 use system::draw_fit_target_bounds;
 pub use types::FitTargetGizmo;
-pub use types::FitTargetMargins;
 pub use types::FitTargetVisualizationConfig;
 
-/// Plugin that adds fit target visualization functionality.
-pub struct FitTargetVisualizationPlugin;
+use crate::events::FitVisualizationBegin;
+use crate::events::FitVisualizationEnd;
+use crate::events::ToggleFitVisualization;
 
-impl Plugin for FitTargetVisualizationPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_gizmo_group::<FitTargetGizmo>()
-            .init_resource::<FitTargetVisualizationConfig>()
-            .add_systems(Startup, init_fit_target_gizmo)
-            .add_systems(
-                Update,
-                (sync_gizmo_render_layers, draw_fit_target_bounds).chain(),
-            )
-            .add_systems(Update, cleanup_labels_when_disabled);
+/// Returns true when the gizmo and asset subsystems are available (absent in headless/test apps).
+fn has_gizmo_subsystem(config_store: Option<Res<GizmoConfigStore>>) -> bool {
+    config_store.is_some()
+}
+
+/// Registers all visualization systems and resources on the given `App`.
+pub fn register(app: &mut App) {
+    // Only initialize gizmo infrastructure when the gizmo plugin is present
+    // (absent in headless/test environments that skip `DefaultPlugins`).
+    if app.is_plugin_added::<bevy::gizmos::GizmoPlugin>() {
+        app.init_gizmo_group::<FitTargetGizmo>();
+    }
+
+    app.init_resource::<FitTargetVisualizationConfig>()
+        .add_observer(on_toggle_fit_visualization)
+        .add_systems(Startup, init_fit_target_gizmo.run_if(has_gizmo_subsystem))
+        .add_systems(
+            Update,
+            (sync_gizmo_render_layers, draw_fit_target_bounds)
+                .chain()
+                .run_if(has_gizmo_subsystem),
+        )
+        .add_systems(
+            Update,
+            cleanup_labels_when_disabled.run_if(has_gizmo_subsystem),
+        );
+}
+
+/// Observer that toggles the `FitTargetGizmo` enabled flag and fires the
+/// corresponding `FitVisualizationBegin` or `FitVisualizationEnd` event.
+fn on_toggle_fit_visualization(
+    _trigger: On<ToggleFitVisualization>,
+    mut commands: Commands,
+    mut config_store: ResMut<GizmoConfigStore>,
+) {
+    let (config, _) = config_store.config_mut::<FitTargetGizmo>();
+    config.enabled = !config.enabled;
+
+    if config.enabled {
+        commands.trigger(FitVisualizationBegin);
+    } else {
+        commands.trigger(FitVisualizationEnd);
     }
 }
 

@@ -9,10 +9,12 @@ use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
+use crate::components::AnimationSourceMarker;
 use crate::components::InterruptBehavior;
 use crate::components::ZoomAnimationMarker;
 use crate::events::AnimationCancelled;
 use crate::events::AnimationEnd;
+use crate::events::AnimationSource;
 use crate::events::CameraMoveBegin;
 use crate::events::CameraMoveEnd;
 use crate::events::ZoomCancelled;
@@ -165,40 +167,48 @@ impl MoveState {
 /// The system will automatically process them one by one, removing the component
 /// when the queue is empty.
 ///
-/// Camera smoothing is automatically disabled while moves are in progress and
+/// Camera smoothing is automatically disabled while camera_moves are in progress and
 /// restored when the queue completes via the `SmoothnessStash` observer.
 #[derive(Component, Reflect, Default)]
 #[require(crate::components::InterruptBehavior)]
 #[reflect(Component, Default)]
 pub struct CameraMoveList {
-    pub moves: VecDeque<CameraMove>,
-    state:     MoveState,
+    pub camera_moves: VecDeque<CameraMove>,
+    state:            MoveState,
 }
 
 impl CameraMoveList {
-    pub const fn new(moves: VecDeque<CameraMove>) -> Self {
+    pub const fn new(camera_moves: VecDeque<CameraMove>) -> Self {
         Self {
-            moves,
+            camera_moves,
             state: MoveState::Ready,
         }
     }
 
-    /// Calculates total remaining time in milliseconds for all queued moves
+    /// Calculates total remaining time in milliseconds for all queued camera_moves
     pub fn remaining_time_ms(&self) -> f32 {
         // Get remaining time for current move
         let current_remaining = match &self.state {
             MoveState::InProgress { elapsed_ms, .. } => {
-                if let Some(current_move) = self.moves.front() {
+                if let Some(current_move) = self.camera_moves.front() {
                     (current_move.duration_ms() - elapsed_ms).max(0.0)
                 } else {
                     0.0
                 }
             },
-            MoveState::Ready => self.moves.front().map_or(0.0, CameraMove::duration_ms),
+            MoveState::Ready => self
+                .camera_moves
+                .front()
+                .map_or(0.0, CameraMove::duration_ms),
         };
 
-        // Add duration of all remaining moves (skip first since already counted)
-        let remaining_queue: f32 = self.moves.iter().skip(1).map(CameraMove::duration_ms).sum();
+        // Add duration of all remaining camera_moves (skip first since already counted)
+        let remaining_queue: f32 = self
+            .camera_moves
+            .iter()
+            .skip(1)
+            .map(CameraMove::duration_ms)
+            .sum();
 
         current_remaining + remaining_queue
     }
@@ -207,8 +217,9 @@ impl CameraMoveList {
 /// System that processes camera movement queues with duration-based interpolation
 ///
 /// When a `PanOrbitCamera` has a `CameraMoveList`, interpolates toward the target over
-/// the specified duration with easing. When a move completes, automatically moves to the next.
-/// Removes the `CameraMoveList` component when all moves are complete.
+/// the specified duration with easing. When a move completes, automatically moves to the
+/// next. Removes the `CameraMoveList` component when all moves are complete.
+#[allow(clippy::type_complexity)]
 pub fn process_camera_move_list(
     mut commands: Commands,
     time: Res<Time>,
@@ -218,15 +229,21 @@ pub fn process_camera_move_list(
         &mut CameraMoveList,
         &InterruptBehavior,
         Option<&ZoomAnimationMarker>,
+        Option<&AnimationSourceMarker>,
     )>,
 ) {
-    for (entity, mut pan_orbit, mut queue, interrupt_behavior, zoom_marker) in &mut camera_query {
+    for (entity, mut pan_orbit, mut queue, interrupt_behavior, zoom_marker, source_marker) in
+        &mut camera_query
+    {
+        let source = source_marker.map_or(AnimationSource::PlayAnimation, |m| m.0);
         // Get the current move from the front of the queue (clone to avoid borrow issues)
-        let Some(current_move) = queue.moves.front().cloned() else {
+        let Some(current_move) = queue.camera_moves.front().cloned() else {
             // Remove components BEFORE triggering events — observers may re-insert
             // `CameraMoveList` (e.g. splash animation chains hold → zoom → spins),
             // and a deferred removal after the trigger would wipe the new one.
-            commands.entity(entity).remove::<CameraMoveList>();
+            commands
+                .entity(entity)
+                .remove::<(CameraMoveList, AnimationSourceMarker)>();
             if let Some(marker) = zoom_marker {
                 commands.entity(entity).remove::<ZoomAnimationMarker>();
                 commands.trigger(ZoomEnd {
@@ -239,6 +256,7 @@ pub fn process_camera_move_list(
             } else {
                 commands.trigger(AnimationEnd {
                     camera_entity: entity,
+                    source,
                 });
             }
             continue;
@@ -249,22 +267,29 @@ pub fn process_camera_move_list(
             match interrupt_behavior {
                 InterruptBehavior::Cancel => {
                     // Stop where we are — fire cancelled events
-                    commands.entity(entity).remove::<CameraMoveList>();
+                    commands
+                        .entity(entity)
+                        .remove::<(CameraMoveList, AnimationSourceMarker)>();
                     if let Some(marker) = zoom_marker {
                         commands.entity(entity).remove::<ZoomAnimationMarker>();
                         commands.trigger(ZoomCancelled {
                             camera_entity: entity,
                             target_entity: marker.target_entity,
+                            margin:        marker.margin,
+                            duration:      marker.duration,
+                            easing:        marker.easing,
                         });
                     } else {
                         commands.trigger(AnimationCancelled {
                             camera_entity: entity,
+                            source,
+                            camera_move: current_move.clone(),
                         });
                     }
                 },
                 InterruptBehavior::Complete => {
                     // Jump to the final position of the entire queue
-                    if let Some(final_move) = queue.moves.back() {
+                    if let Some(final_move) = queue.camera_moves.back() {
                         let (yaw, pitch, radius) = final_move.orbital_params();
                         pan_orbit.target_focus = final_move.focus();
                         pan_orbit.target_yaw = yaw;
@@ -273,7 +298,9 @@ pub fn process_camera_move_list(
                         pan_orbit.force_update = true;
                     }
                     // Fire normal end events
-                    commands.entity(entity).remove::<CameraMoveList>();
+                    commands
+                        .entity(entity)
+                        .remove::<(CameraMoveList, AnimationSourceMarker)>();
                     if let Some(marker) = zoom_marker {
                         commands.entity(entity).remove::<ZoomAnimationMarker>();
                         commands.trigger(ZoomEnd {
@@ -286,6 +313,7 @@ pub fn process_camera_move_list(
                     } else {
                         commands.trigger(AnimationEnd {
                             camera_entity: entity,
+                            source,
                         });
                     }
                 },
@@ -316,7 +344,7 @@ pub fn process_camera_move_list(
                             camera_move:   current_move,
                         });
                     }
-                    queue.moves.pop_front();
+                    queue.camera_moves.pop_front();
                     continue;
                 }
 
@@ -413,7 +441,7 @@ pub fn process_camera_move_list(
                             camera_move:   current_move.clone(),
                         });
                     }
-                    queue.moves.pop_front();
+                    queue.camera_moves.pop_front();
                     queue.state = MoveState::Ready;
                 }
             },

@@ -5,6 +5,8 @@ use std::time::Duration;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 
+use crate::events::AnimationSource;
+
 /// Configures what happens when external camera input interrupts an animation.
 ///
 /// This is a required component on [`CameraMoveList`](crate::CameraMoveList) — if not
@@ -40,6 +42,13 @@ pub struct ZoomAnimationMarker {
     pub duration:      Duration,
     pub easing:        EaseFunction,
 }
+
+/// Marker component that tracks whether an animation was triggered by
+/// [`PlayAnimation`](crate::PlayAnimation) or [`AnimateToFit`](crate::AnimateToFit).
+/// Inserted alongside [`CameraMoveList`](crate::CameraMoveList) and removed when the
+/// animation ends or is cancelled.
+#[derive(Component)]
+pub struct AnimationSourceMarker(pub AnimationSource);
 
 /// Component that stores camera smoothness values during animations.
 ///

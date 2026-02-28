@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::support::ScreenSpaceBounds;
 
 /// Gizmo config group for fit target visualization (screen-aligned overlay).
-/// Toggle via `GizmoConfigStore::config_mut::<FitTargetGizmo>().enabled`
+/// Toggle via the `ToggleFitVisualization` event.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct FitTargetGizmo;
 
@@ -12,14 +12,14 @@ pub struct FitTargetGizmo;
 /// Removed when fit target visualization is disabled.
 #[derive(Component, Reflect, Debug, Default, Clone)]
 #[reflect(Component)]
-pub struct FitTargetMargins {
+pub struct FitTargetViewportMargins {
     pub left_pct:   f32,
     pub right_pct:  f32,
     pub top_pct:    f32,
     pub bottom_pct: f32,
 }
 
-impl FitTargetMargins {
+impl FitTargetViewportMargins {
     /// Constructs margin percentages from screen-space bounds, computing
     /// screen dimensions once rather than per-edge.
     pub fn from_bounds(bounds: &ScreenSpaceBounds) -> Self {

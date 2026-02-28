@@ -29,11 +29,12 @@ use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
-use bevy_panorbit_camera_ext::FitTargetGizmo;
-use bevy_panorbit_camera_ext::FitTargetVisualizationPlugin;
+use bevy_panorbit_camera_ext::FitVisualizationBegin;
+use bevy_panorbit_camera_ext::FitVisualizationEnd;
 use bevy_panorbit_camera_ext::InterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
+use bevy_panorbit_camera_ext::ToggleFitVisualization;
 use bevy_panorbit_camera_ext::ZoomBegin;
 use bevy_panorbit_camera_ext::ZoomCancelled;
 use bevy_panorbit_camera_ext::ZoomEnd;
@@ -86,13 +87,13 @@ fn main() {
             DefaultPlugins,
             PanOrbitCameraPlugin,
             PanOrbitCameraExtPlugin,
-            FitTargetVisualizationPlugin,
             MeshPickingPlugin,
             BrpExtrasPlugin::default(),
         ))
         .insert_resource(DirectionalLightShadowMap { size: 4096 })
         .init_state::<AppState>()
         .init_resource::<ActiveEasing>()
+        .init_resource::<DebugVisualizationActive>()
         .init_resource::<EventLog>()
         .add_systems(Startup, setup)
         .add_systems(
@@ -120,6 +121,8 @@ fn main() {
         .add_observer(log_zoom_begin)
         .add_observer(log_zoom_end)
         .add_observer(log_zoom_cancelled)
+        .add_observer(log_fit_visualization_begin)
+        .add_observer(log_fit_visualization_end)
         .run();
 }
 
@@ -183,6 +186,9 @@ const ALL_EASINGS: &[EaseFunction] = &[
     EaseFunction::BounceOut,
     EaseFunction::BounceInOut,
 ];
+
+#[derive(Resource, Default)]
+struct DebugVisualizationActive(bool);
 
 #[derive(Resource, Default)]
 struct EventLog {
@@ -467,22 +473,22 @@ fn on_mesh_dragged(drag: On<Pointer<Drag>>, mut transforms: Query<&mut Transform
 
 fn toggle_debug_visualization(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut config_store: ResMut<GizmoConfigStore>,
+    mut commands: Commands,
+    mut active: ResMut<DebugVisualizationActive>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyD) {
-        let (config, _) = config_store.config_mut::<FitTargetGizmo>();
-        config.enabled = !config.enabled;
+        active.0 = !active.0;
+        commands.trigger(ToggleFitVisualization);
     }
 }
 
 fn draw_selection_gizmo(
     mut gizmos: Gizmos,
-    config_store: Res<GizmoConfigStore>,
+    debug_active: Res<DebugVisualizationActive>,
     query: Query<(&Transform, &MeshShape), With<Selected>>,
 ) {
     // Hide selection gizmo when debug visualization is active
-    let (debug_config, _) = config_store.config::<FitTargetGizmo>();
-    if debug_config.enabled {
+    if debug_active.0 {
         return;
     }
 
@@ -540,8 +546,8 @@ fn animate_camera(
     let focus = camera.target_focus;
     let half_pi = PI / 2.0;
 
-    // 4 moves that orbit PI/2 at a time from the current position
-    let moves = VecDeque::from([
+    // 4 camera moves that orbit PI/2 at a time from the current position
+    let camera_moves = VecDeque::from([
         CameraMove::ToOrbit {
             focus,
             yaw: yaw + half_pi,
@@ -576,7 +582,7 @@ fn animate_camera(
         },
     ]);
 
-    commands.trigger(PlayAnimation::new(scene.camera, moves));
+    commands.trigger(PlayAnimation::new(scene.camera, camera_moves));
 }
 
 fn randomize_easing(
@@ -744,8 +750,11 @@ impl EventLog {
 
 fn fmt_vec3(v: Vec3) -> String { format!("({:.1}, {:.1}, {:.1})", v.x, v.y, v.z) }
 
-fn log_animation_start(_event: On<AnimationBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push("AnimationBegin".into(), &time);
+fn log_animation_start(event: On<AnimationBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
+    log.push(
+        format!("AnimationBegin\n  source={:?}", event.source),
+        &time,
+    );
 }
 
 fn log_animation_begin(_event: On<AnimationEnd>, time: Res<Time>, mut log: ResMut<EventLog>) {
@@ -786,15 +795,39 @@ fn log_zoom_end(_event: On<ZoomEnd>, time: Res<Time>, mut log: ResMut<EventLog>)
 }
 
 fn log_animation_cancelled(
-    _event: On<AnimationCancelled>,
+    event: On<AnimationCancelled>,
     time: Res<Time>,
     mut log: ResMut<EventLog>,
 ) {
-    log.push("AnimationCancelled".to_string(), &time);
+    log.push(
+        format!(
+            "AnimationCancelled\n  source={:?}\n  move_translation={}\n  move_focus={}",
+            event.source,
+            fmt_vec3(event.camera_move.translation()),
+            fmt_vec3(event.camera_move.focus()),
+        ),
+        &time,
+    );
 }
 
 fn log_zoom_cancelled(_event: On<ZoomCancelled>, time: Res<Time>, mut log: ResMut<EventLog>) {
     log.push("ZoomCancelled".to_string(), &time);
+}
+
+fn log_fit_visualization_begin(
+    _event: On<FitVisualizationBegin>,
+    time: Res<Time>,
+    mut log: ResMut<EventLog>,
+) {
+    log.push("FitVisualizationBegin".to_string(), &time);
+}
+
+fn log_fit_visualization_end(
+    _event: On<FitVisualizationEnd>,
+    time: Res<Time>,
+    mut log: ResMut<EventLog>,
+) {
+    log.push("FitVisualizationEnd".to_string(), &time);
 }
 
 fn update_event_log_text(

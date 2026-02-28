@@ -17,7 +17,7 @@ use super::screen_space::norm_to_viewport;
 use super::screen_space::normalized_to_world;
 use super::screen_space::screen_edge_center;
 use super::types::FitTargetGizmo;
-use super::types::FitTargetMargins;
+use super::types::FitTargetViewportMargins;
 use super::types::FitTargetVisualizationConfig;
 use crate::components::CurrentFitTarget;
 use crate::fit::Edge;
@@ -165,7 +165,7 @@ fn draw_margin_lines_and_labels(
                 continue;
             };
             let percentage = margin_percentage(bounds, edge);
-            let text = format!("{percentage:.3}%");
+            let text = format!("margin: {percentage:.3}%");
             let label_screen_pos = calculate_label_pixel_position(edge, bounds, vp);
 
             update_or_create_margin_label(
@@ -267,7 +267,7 @@ pub fn draw_fit_target_bounds(
     // Update margin percentages on camera entity for BRP inspection
     commands
         .entity(camera_entity)
-        .insert(FitTargetMargins::from_bounds(&bounds));
+        .insert(FitTargetViewportMargins::from_bounds(&bounds));
 
     // Bounding rectangle
     let corners = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);

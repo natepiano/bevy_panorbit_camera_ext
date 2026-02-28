@@ -8,12 +8,14 @@ use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
+use crate::components::AnimationSourceMarker;
 use crate::components::CurrentFitTarget;
 use crate::components::SmoothnessStash;
 use crate::components::ZoomAnimationMarker;
 use crate::events::AnimateToFit;
 use crate::events::AnimationBegin;
 use crate::events::AnimationEnd;
+use crate::events::AnimationSource;
 use crate::events::PlayAnimation;
 use crate::events::SetFitTarget;
 use crate::events::ZoomBegin;
@@ -150,7 +152,7 @@ pub fn on_zoom_to_fit(
     if duration > Duration::ZERO {
         // Animated path: use `ToOrbit` to pass orbital params directly, avoiding
         // gimbal lock from atan2 decomposition at extreme pitch angles.
-        let moves = VecDeque::from([CameraMove::ToOrbit {
+        let camera_moves = VecDeque::from([CameraMove::ToOrbit {
             focus: fit.focus,
             yaw: camera.target_yaw,
             pitch: camera.target_pitch,
@@ -167,7 +169,7 @@ pub fn on_zoom_to_fit(
             easing,
         });
 
-        commands.trigger(PlayAnimation::new(camera_entity, moves));
+        commands.trigger(PlayAnimation::new(camera_entity, camera_moves));
     } else {
         // Instant path: snap directly to target
         camera.focus = fit.focus;
@@ -192,28 +194,41 @@ pub fn on_zoom_to_fit(
 pub fn on_play_animation(
     start: On<PlayAnimation>,
     mut commands: Commands,
-    mut camera_query: Query<(&mut PanOrbitCamera, Option<&SmoothnessStash>)>,
+    mut camera_query: Query<(
+        &mut PanOrbitCamera,
+        Option<&SmoothnessStash>,
+        Option<&AnimationSourceMarker>,
+    )>,
     marker_query: Query<(), With<ZoomAnimationMarker>>,
 ) {
     let entity = start.camera_entity;
 
-    let Ok((mut camera, existing_stash)) = camera_query.get_mut(entity) else {
+    let Ok((mut camera, existing_stash, existing_source)) = camera_query.get_mut(entity) else {
         return;
     };
+
+    // Use existing source marker if present (set by AnimateToFit), otherwise default
+    let source = existing_source.map_or(AnimationSource::PlayAnimation, |m| m.0);
 
     // Only fire `AnimationBegin` for user-initiated animations, not internal zoom animations
     if marker_query.get(entity).is_err() {
         commands.trigger(AnimationBegin {
             camera_entity: entity,
+            source,
         });
     }
 
     ensure_animation_smoothness(&mut commands, entity, &mut camera, existing_stash.is_some());
 
-    // Add the animation component
+    // Add the animation component; only set source marker if not already present
     commands
         .entity(entity)
-        .insert(CameraMoveList::new(start.moves.clone()));
+        .insert(CameraMoveList::new(start.camera_moves.clone()));
+    if existing_source.is_none() {
+        commands
+            .entity(entity)
+            .insert(AnimationSourceMarker(source));
+    }
 }
 
 /// Observer for direct `CameraMoveList` insertion (bypassing `PlayAnimation`).
@@ -277,8 +292,13 @@ pub fn on_animate_to_fit(
         return;
     };
 
+    // Mark the source before triggering PlayAnimation so it picks up the correct source
+    commands
+        .entity(camera_entity)
+        .insert(AnimationSourceMarker(AnimationSource::AnimateToFit));
+
     if duration > Duration::ZERO {
-        let moves = VecDeque::from([CameraMove::ToOrbit {
+        let camera_moves = VecDeque::from([CameraMove::ToOrbit {
             focus: fit.focus,
             yaw,
             pitch,
@@ -286,7 +306,7 @@ pub fn on_animate_to_fit(
             duration,
             easing,
         }]);
-        commands.trigger(PlayAnimation::new(camera_entity, moves));
+        commands.trigger(PlayAnimation::new(camera_entity, camera_moves));
     } else {
         camera.focus = fit.focus;
         camera.yaw = Some(yaw);
@@ -297,8 +317,15 @@ pub fn on_animate_to_fit(
         camera.target_yaw = yaw;
         camera.target_pitch = pitch;
         camera.force_update = true;
-        commands.trigger(AnimationBegin { camera_entity });
-        commands.trigger(AnimationEnd { camera_entity });
+        let source = AnimationSource::AnimateToFit;
+        commands.trigger(AnimationBegin {
+            camera_entity,
+            source,
+        });
+        commands.trigger(AnimationEnd {
+            camera_entity,
+            source,
+        });
     }
     // Route fit target updates through a single lifecycle owner.
     commands.trigger(SetFitTarget::new(camera_entity, target_entity));

@@ -1,8 +1,13 @@
-// bevy_panorbit_camera_ext
-// Extension library for bevy_panorbit_camera providing:
-// - Camera animation system with queued moves
-// - Zoom-to-fit functionality
-// - Extension traits for camera manipulation
+//! Extensions for [`bevy_panorbit_camera`] that add zoom-to-fit, queued camera
+//! animations, and fit-target debug visualization.
+//!
+//! Add [`PanOrbitCameraExtPlugin`] to your app — it registers all observers,
+//! systems, and visualization infrastructure automatically. Control the camera
+//! by triggering events (e.g. [`ZoomToFit`], [`AnimateToFit`], [`PlayAnimation`])
+//! and observe lifecycle events (e.g. [`ZoomBegin`], [`AnimationEnd`]) to react
+//! when operations start, complete, or get cancelled.
+//!
+//! Usage instructions in events.rs
 
 use bevy::prelude::*;
 
@@ -14,45 +19,55 @@ mod observers;
 mod support;
 mod visualization;
 
-// Public API - Animation types
+// Animation types
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
 use animation::process_camera_move_list;
-// Public API - Components
+pub use components::AnimationSourceMarker;
+// Components
 pub use components::CurrentFitTarget;
 pub use components::InterruptBehavior;
 pub use components::SmoothnessStash;
 pub use components::ZoomAnimationMarker;
-// Public API - Events
-pub use events::AnimateToFit;
-pub use events::AnimationBegin;
-pub use events::AnimationCancelled;
-pub use events::AnimationEnd;
-pub use events::CameraMoveBegin;
-pub use events::CameraMoveEnd;
-pub use events::PlayAnimation;
-pub use events::SetFitTarget;
-pub use events::ZoomBegin;
-pub use events::ZoomCancelled;
-pub use events::ZoomEnd;
-pub use events::ZoomToFit;
-// Public API - Fit types
-pub use fit::Edge;
 use observers::on_animate_to_fit;
 use observers::on_camera_move_list_added;
 use observers::on_play_animation;
 use observers::on_set_fit_target;
 use observers::on_zoom_to_fit;
 use observers::restore_smoothness_on_move_end;
-pub use support::PointDepths;
-pub use support::ScreenSpaceBounds;
-// Public API - Gizmo groups (for enabling/disabling)
-pub use visualization::FitTargetGizmo;
-pub use visualization::FitTargetMargins;
-// Public API - Configuration resources
+// Visualization
 pub use visualization::FitTargetVisualizationConfig;
-// Public API - Plugins
-pub use visualization::FitTargetVisualizationPlugin;
+
+// Events — grouped by feature, each trigger followed by its fired events.
+#[rustfmt::skip]
+mod _events {
+    // ZoomToFit
+    pub use super::events::ZoomToFit;
+    pub use super::events::ZoomBegin;
+    pub use super::events::ZoomEnd;
+    pub use super::events::ZoomCancelled;
+
+    // PlayAnimation
+    pub use super::events::AnimationSource;
+    pub use super::events::PlayAnimation;
+    pub use super::events::AnimationBegin;
+    pub use super::events::AnimationEnd;
+    pub use super::events::AnimationCancelled;
+    pub use super::events::CameraMoveBegin;
+    pub use super::events::CameraMoveEnd;
+
+    // AnimateToFit (shares PlayAnimation lifecycle events)
+    pub use super::events::AnimateToFit;
+
+    // SetFitTarget
+    pub use super::events::SetFitTarget;
+
+    // ToggleFitVisualization
+    pub use super::events::ToggleFitVisualization;
+    pub use super::events::FitVisualizationBegin;
+    pub use super::events::FitVisualizationEnd;
+}
+pub use _events::*;
 
 /// Plugin that adds all camera extension functionality
 pub struct PanOrbitCameraExtPlugin;
@@ -70,5 +85,8 @@ impl Plugin for PanOrbitCameraExtPlugin {
             .add_observer(on_animate_to_fit)
             // Add systems
             .add_systems(Update, process_camera_move_list);
+
+        // Register visualization systems and resources
+        visualization::register(app);
     }
 }
