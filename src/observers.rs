@@ -256,6 +256,30 @@ pub fn on_play_animation(
                 return;
             },
             AnimationConflictPolicy::LastWins => {
+                // Cancel in-flight animation — read source from existing marker
+                let in_flight_source = source_marker_query
+                    .get(entity)
+                    .map_or(AnimationSource::PlayAnimation, |m| m.0);
+                if let Ok(queue) = move_list_query.get(entity) {
+                    let camera_move =
+                        queue
+                            .camera_moves
+                            .front()
+                            .cloned()
+                            .unwrap_or(CameraMove::ToOrbit {
+                                focus:    Vec3::ZERO,
+                                yaw:      0.0,
+                                pitch:    0.0,
+                                radius:   1.0,
+                                duration: Duration::ZERO,
+                                easing:   EaseFunction::Linear,
+                            });
+                    commands.trigger(AnimationCancelled {
+                        camera_entity: entity,
+                        source: in_flight_source,
+                        camera_move,
+                    });
+                }
                 // Cancel in-flight zoom if present
                 if let Ok(marker) = marker_query.get(entity) {
                     commands.entity(entity).remove::<ZoomAnimationMarker>();
@@ -266,31 +290,6 @@ pub fn on_play_animation(
                         duration:      marker.duration,
                         easing:        marker.easing,
                     });
-                } else {
-                    // Cancel in-flight animation — read source from existing marker
-                    let in_flight_source = source_marker_query
-                        .get(entity)
-                        .map_or(AnimationSource::PlayAnimation, |m| m.0);
-                    if let Ok(queue) = move_list_query.get(entity) {
-                        let camera_move =
-                            queue
-                                .camera_moves
-                                .front()
-                                .cloned()
-                                .unwrap_or(CameraMove::ToOrbit {
-                                    focus:    Vec3::ZERO,
-                                    yaw:      0.0,
-                                    pitch:    0.0,
-                                    radius:   1.0,
-                                    duration: Duration::ZERO,
-                                    easing:   EaseFunction::Linear,
-                                });
-                        commands.trigger(AnimationCancelled {
-                            camera_entity: entity,
-                            source: in_flight_source,
-                            camera_move,
-                        });
-                    }
                 }
             },
         }

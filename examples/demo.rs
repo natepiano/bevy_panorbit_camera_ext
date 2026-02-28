@@ -29,6 +29,7 @@ use bevy_panorbit_camera_ext::AnimationCancelled;
 use bevy_panorbit_camera_ext::AnimationConflictPolicy;
 use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::AnimationRejected;
+use bevy_panorbit_camera_ext::AnimationSource;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
@@ -43,14 +44,15 @@ use bevy_panorbit_camera_ext::ZoomCancelled;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
 
-const ZOOM_DURATION_MS: f32 = 500.0;
+const ZOOM_DURATION_MS: f32 = 1000.0;
 const ZOOM_MARGIN_MESH: f32 = 0.25;
 const ZOOM_MARGIN_SCENE: f32 = 0.08;
 const GIZMO_SCALE: f32 = 1.03;
 const DRAG_SENSITIVITY: f32 = 0.02;
 const MESH_CENTER_Y: f32 = 1.0;
 const EVENT_LOG_FONT_SIZE: f32 = 14.0;
-const EVENT_LINE_LIFETIME_SECS: f32 = 8.0;
+const EVENT_LOG_SCROLL_SPEED: f32 = 120.0;
+const EVENT_LOG_WIDTH: f32 = 300.0;
 const ANIMATE_FIT_DURATION_MS: f32 = 1200.0;
 const CAMERA_START_YAW: f32 = -0.2;
 const CAMERA_START_PITCH: f32 = 0.4;
@@ -109,6 +111,7 @@ fn main() {
                 toggle_pause,
                 draw_selection_gizmo,
                 update_event_log_text,
+                scroll_event_log,
                 (
                     toggle_debug_visualization,
                     toggle_projection,
@@ -149,11 +152,6 @@ struct AnimationConflictPolicyLabel;
 
 #[derive(Component)]
 struct PausedOverlay;
-
-struct EventLine {
-    text:      String,
-    timestamp: f32,
-}
 
 #[derive(Resource)]
 struct ActiveEasing(EaseFunction);
@@ -205,10 +203,17 @@ const ALL_EASINGS: &[EaseFunction] = &[
 #[derive(Resource, Default)]
 struct DebugVisualizationActive(bool);
 
+struct PendingLogEntry {
+    text:  String,
+    color: Color,
+}
+
+const EVENT_LOG_COLOR: Color = Color::srgba(0.0, 1.0, 0.0, 0.9);
+const EVENT_LOG_COLOR_RED: Color = Color::srgba(1.0, 0.3, 0.3, 0.9);
+
 #[derive(Resource, Default)]
 struct EventLog {
-    lines: Vec<EventLine>,
-    dirty: bool,
+    pending: Vec<PendingLogEntry>,
 }
 
 #[derive(Component)]
@@ -341,7 +346,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'C' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy"),
+        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy"),
         TextFont {
             font_size: 13.0,
             ..default()
@@ -388,21 +393,36 @@ fn setup(
         AnimationConflictPolicyLabel,
     ));
 
-    // Event log display (top-right, grows downward)
+    // Event log scroll container (right edge, scrollable)
     commands.spawn((
-        Text::new(""),
-        TextFont {
-            font_size: EVENT_LOG_FONT_SIZE,
-            ..default()
-        },
-        TextColor(Color::srgba(0.0, 1.0, 0.0, 0.9)),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(12.0),
             right: Val::Px(12.0),
+            width: Val::Px(EVENT_LOG_WIDTH),
+            bottom: Val::Px(32.0),
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::scroll_y(),
             ..default()
         },
+        Pickable::IGNORE,
         EventLogNode,
+    ));
+
+    // Scroll hint (bottom-right, aligned with InputInterruptBehavior hint)
+    commands.spawn((
+        Text::new("Up/Down scroll log | 'C' clear log"),
+        TextFont {
+            font_size: 13.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.7, 0.7, 0.7, 0.7)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(12.0),
+            right: Val::Px(12.0),
+            ..default()
+        },
     ));
 
     // Paused overlay (centered, hidden until Esc)
@@ -688,11 +708,11 @@ fn randomize_easing(
     if keyboard.just_pressed(KeyCode::KeyR) {
         let index = (time.elapsed_secs() * 1000.0) as usize % ALL_EASINGS.len();
         easing.0 = ALL_EASINGS[index];
-        log.push(format!("Easing: {:#?}", easing.0), &time);
+        log.push(format!("Easing: {:#?}", easing.0));
     }
-    if keyboard.just_pressed(KeyCode::KeyC) {
+    if keyboard.just_pressed(KeyCode::KeyE) {
         easing.0 = EaseFunction::CubicOut;
-        log.push("Easing: reset to CubicOut".into(), &time);
+        log.push("Easing: reset to CubicOut".into());
     }
 }
 
@@ -728,7 +748,6 @@ fn toggle_projection(
     scene: Res<SceneEntities>,
     active_easing: Res<ActiveEasing>,
     mut camera_query: Query<(&mut Projection, &mut PanOrbitCamera)>,
-    time: Res<Time>,
     mut log: ResMut<EventLog>,
     mut pending_fit: Local<bool>,
 ) {
@@ -764,14 +783,14 @@ fn toggle_projection(
             commands
                 .entity(scene.light)
                 .insert(cascade_shadow_config_orthographic());
-            log.push("Projection: Orthographic".into(), &time);
+            log.push("Projection: Orthographic".into());
         },
         Projection::Orthographic(_) => {
             *projection = Projection::Perspective(PerspectiveProjection::default());
             commands
                 .entity(scene.light)
                 .insert(cascade_shadow_config_perspective());
-            log.push("Projection: Perspective".into(), &time);
+            log.push("Projection: Perspective".into());
         },
         _ => {},
     }
@@ -797,7 +816,6 @@ fn toggle_interrupt_behavior(
     scene: Res<SceneEntities>,
     mut behavior_query: Query<&mut InputInterruptBehavior>,
     mut hint_query: Query<&mut Text, With<InputInterruptBehaviorLabel>>,
-    time: Res<Time>,
     mut log: ResMut<EventLog>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyI) {
@@ -812,7 +830,7 @@ fn toggle_interrupt_behavior(
         for mut text in &mut hint_query {
             **text = interrupt_behavior_hint_text(InputInterruptBehavior::Complete);
         }
-        log.push("InputInterruptBehavior: Complete".into(), &time);
+        log.push("InputInterruptBehavior: Complete".into());
         return;
     };
 
@@ -825,7 +843,7 @@ fn toggle_interrupt_behavior(
     for mut text in &mut hint_query {
         **text = interrupt_behavior_hint_text(new_behavior);
     }
-    log.push(format!("InputInterruptBehavior: {new_behavior:?}"), &time);
+    log.push(format!("InputInterruptBehavior: {new_behavior:?}"));
 }
 
 fn conflict_policy_hint_text(policy: AnimationConflictPolicy) -> String {
@@ -846,7 +864,6 @@ fn toggle_animation_conflict_policy(
     scene: Res<SceneEntities>,
     mut policy_query: Query<&mut AnimationConflictPolicy>,
     mut hint_query: Query<&mut Text, With<AnimationConflictPolicyLabel>>,
-    time: Res<Time>,
     mut log: ResMut<EventLog>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyQ) {
@@ -861,7 +878,7 @@ fn toggle_animation_conflict_policy(
         for mut text in &mut hint_query {
             **text = conflict_policy_hint_text(AnimationConflictPolicy::FirstWins);
         }
-        log.push("AnimationConflictPolicy: FirstWins".into(), &time);
+        log.push("AnimationConflictPolicy: FirstWins".into());
         return;
     };
 
@@ -874,146 +891,177 @@ fn toggle_animation_conflict_policy(
     for mut text in &mut hint_query {
         **text = conflict_policy_hint_text(new_policy);
     }
-    log.push(format!("AnimationConflictPolicy: {new_policy:?}"), &time);
+    log.push(format!("AnimationConflictPolicy: {new_policy:?}"));
 }
 
 // ============================================================================
 // Event log
 // ============================================================================
 
+const EVENT_LOG_SEPARATOR: &str = "- - - - - - - - - - - -";
+
 impl EventLog {
-    fn push(&mut self, text: String, time: &Time) {
-        self.lines.push(EventLine {
+    fn push(&mut self, text: String) {
+        self.pending.push(PendingLogEntry {
             text,
-            timestamp: time.elapsed_secs(),
+            color: EVENT_LOG_COLOR,
         });
-        self.dirty = true;
+    }
+
+    fn push_red(&mut self, text: String) {
+        self.pending.push(PendingLogEntry {
+            text,
+            color: EVENT_LOG_COLOR_RED,
+        });
+    }
+
+    fn separator(&mut self) {
+        self.pending.push(PendingLogEntry {
+            text:  EVENT_LOG_SEPARATOR.into(),
+            color: EVENT_LOG_COLOR,
+        });
     }
 }
 
 fn fmt_vec3(v: Vec3) -> String { format!("({:.1}, {:.1}, {:.1})", v.x, v.y, v.z) }
 
-fn log_animation_start(event: On<AnimationBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push(
-        format!("AnimationBegin\n  source={:?}", event.source),
-        &time,
-    );
+fn log_animation_start(event: On<AnimationBegin>, mut log: ResMut<EventLog>) {
+    log.push(format!("AnimationBegin\n  source={:?}", event.source));
 }
 
-fn log_animation_begin(event: On<AnimationEnd>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push(format!("AnimationEnd\n  source={:?}", event.source), &time);
+fn log_animation_begin(event: On<AnimationEnd>, mut log: ResMut<EventLog>) {
+    log.push(format!("AnimationEnd\n  source={:?}", event.source));
+    if event.source != AnimationSource::ZoomToFit {
+        log.separator();
+    }
 }
 
-fn log_camera_move_start(event: On<CameraMoveBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push(
-        format!(
-            "CameraMoveBegin\n  translation={}\n  focus={}\n  duration={:.0}ms\n  easing={:?}",
-            fmt_vec3(event.camera_move.translation()),
-            fmt_vec3(event.camera_move.focus()),
-            event.camera_move.duration_ms(),
-            event.camera_move.easing(),
-        ),
-        &time,
-    );
+fn log_camera_move_start(event: On<CameraMoveBegin>, mut log: ResMut<EventLog>) {
+    log.push(format!(
+        "CameraMoveBegin\n  translation={}\n  focus={}\n  duration={:.0}ms\n  easing={:?}",
+        fmt_vec3(event.camera_move.translation()),
+        fmt_vec3(event.camera_move.focus()),
+        event.camera_move.duration_ms(),
+        event.camera_move.easing(),
+    ));
 }
 
-fn log_camera_move_end(_event: On<CameraMoveEnd>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push("CameraMoveEnd".to_string(), &time);
+fn log_camera_move_end(_event: On<CameraMoveEnd>, mut log: ResMut<EventLog>) {
+    log.push("CameraMoveEnd".into());
 }
 
-fn log_zoom_begin(event: On<ZoomBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push(
-        format!(
-            "ZoomBegin\n  margin={:.2}\n  duration={:.0}ms\n  easing={:?}",
-            event.margin,
-            event.duration.as_secs_f32() * 1000.0,
-            event.easing,
-        ),
-        &time,
-    );
+fn log_zoom_begin(event: On<ZoomBegin>, mut log: ResMut<EventLog>) {
+    log.push(format!(
+        "ZoomBegin\n  margin={:.2}\n  duration={:.0}ms\n  easing={:?}",
+        event.margin,
+        event.duration.as_secs_f32() * 1000.0,
+        event.easing,
+    ));
 }
 
-fn log_zoom_end(_event: On<ZoomEnd>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push("ZoomEnd".to_string(), &time);
+fn log_zoom_end(_event: On<ZoomEnd>, mut log: ResMut<EventLog>) {
+    log.push("ZoomEnd".into());
+    log.separator();
 }
 
-fn log_animation_cancelled(
-    event: On<AnimationCancelled>,
-    time: Res<Time>,
-    mut log: ResMut<EventLog>,
-) {
-    log.push(
-        format!(
-            "AnimationCancelled\n  source={:?}\n  move_translation={}\n  move_focus={}",
-            event.source,
-            fmt_vec3(event.camera_move.translation()),
-            fmt_vec3(event.camera_move.focus()),
-        ),
-        &time,
-    );
+fn log_animation_cancelled(event: On<AnimationCancelled>, mut log: ResMut<EventLog>) {
+    log.push_red(format!(
+        "AnimationCancelled\n  source={:?}\n  move_translation={}\n  move_focus={}",
+        event.source,
+        fmt_vec3(event.camera_move.translation()),
+        fmt_vec3(event.camera_move.focus()),
+    ));
 }
 
-fn log_zoom_cancelled(_event: On<ZoomCancelled>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push("ZoomCancelled".to_string(), &time);
+fn log_zoom_cancelled(_event: On<ZoomCancelled>, mut log: ResMut<EventLog>) {
+    log.push_red("ZoomCancelled".into());
 }
 
-fn log_animation_rejected(
-    event: On<AnimationRejected>,
-    time: Res<Time>,
-    mut log: ResMut<EventLog>,
-) {
-    log.push(
-        format!("AnimationRejected\n  source={:?}", event.source),
-        &time,
-    );
+fn log_animation_rejected(event: On<AnimationRejected>, mut log: ResMut<EventLog>) {
+    log.push_red(format!("AnimationRejected\n  source={:?}", event.source));
 }
 
-fn log_fit_visualization_begin(
-    event: On<FitVisualizationBegin>,
-    time: Res<Time>,
-    mut log: ResMut<EventLog>,
-) {
-    log.push(
-        format!("FitVisualizationBegin\n  camera={:?}", event.camera_entity),
-        &time,
-    );
+fn log_fit_visualization_begin(event: On<FitVisualizationBegin>, mut log: ResMut<EventLog>) {
+    log.push(format!(
+        "FitVisualizationBegin\n  camera={:?}",
+        event.camera_entity
+    ));
 }
 
-fn log_fit_visualization_end(
-    event: On<FitVisualizationEnd>,
-    time: Res<Time>,
-    mut log: ResMut<EventLog>,
-) {
-    log.push(
-        format!("FitVisualizationEnd\n  camera={:?}", event.camera_entity),
-        &time,
-    );
+fn log_fit_visualization_end(event: On<FitVisualizationEnd>, mut log: ResMut<EventLog>) {
+    log.push(format!(
+        "FitVisualizationEnd\n  camera={:?}",
+        event.camera_entity
+    ));
 }
 
+/// Spawns pending log entries as child `Text` nodes inside the scroll container
+/// and auto-scrolls to the bottom.
 fn update_event_log_text(
-    time: Res<Time>,
+    mut commands: Commands,
     mut log: ResMut<EventLog>,
-    mut query: Query<&mut Text, With<EventLogNode>>,
+    container_query: Query<(Entity, &Node, &ComputedNode), With<EventLogNode>>,
+    mut scroll_query: Query<&mut ScrollPosition, With<EventLogNode>>,
 ) {
-    let now = time.elapsed_secs();
-    let prev_len = log.lines.len();
-    log.lines
-        .retain(|line| now - line.timestamp < EVENT_LINE_LIFETIME_SECS);
-    let expired = log.lines.len() != prev_len;
-
-    if !log.dirty && !expired {
+    if log.pending.is_empty() {
         return;
     }
-    log.dirty = false;
 
-    let display: String = log
-        .lines
-        .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let Ok((container, _node, computed)) = container_query.single() else {
+        return;
+    };
 
-    for mut text in &mut query {
-        **text = display.clone();
+    for entry in log.pending.drain(..) {
+        commands.entity(container).with_child((
+            Text::new(entry.text),
+            TextFont {
+                font_size: EVENT_LOG_FONT_SIZE,
+                ..default()
+            },
+            TextColor(entry.color),
+        ));
     }
+
+    // Auto-scroll to bottom
+    if let Ok(mut scroll) = scroll_query.single_mut() {
+        let content_height = computed.content_size().y;
+        let container_height = computed.size().y;
+        let max_scroll =
+            (content_height - container_height).max(0.0) * computed.inverse_scale_factor();
+        scroll.y = max_scroll + EVENT_LOG_SCROLL_SPEED * 4.0;
+    }
+}
+
+/// Scrolls the event log with Up/Down arrow keys, clears with 'C'.
+fn scroll_event_log(
+    mut commands: Commands,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut scroll_query: Query<(Entity, &mut ScrollPosition, &ComputedNode), With<EventLogNode>>,
+    children_query: Query<&Children>,
+) {
+    let Ok((container, mut scroll, computed)) = scroll_query.single_mut() else {
+        return;
+    };
+
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        if let Ok(children) = children_query.get(container) {
+            for child in children.iter() {
+                commands.entity(child).despawn();
+            }
+        }
+        scroll.y = 0.0;
+        return;
+    }
+
+    let dy = if keyboard.pressed(KeyCode::ArrowDown) {
+        EVENT_LOG_SCROLL_SPEED
+    } else if keyboard.pressed(KeyCode::ArrowUp) {
+        -EVENT_LOG_SCROLL_SPEED
+    } else {
+        return;
+    };
+
+    let max_scroll =
+        (computed.content_size().y - computed.size().y).max(0.0) * computed.inverse_scale_factor();
+    scroll.y = (scroll.y + dy).clamp(0.0, max_scroll);
 }

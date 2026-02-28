@@ -87,17 +87,12 @@
 //!
 //! When a new animation request arrives while one is already in-flight:
 //!
-//! - **`LastWins`** (default) — cancels the in-flight animation, then starts the new one. If the
-//!   in-flight operation is a zoom:
+//! - **`LastWins`** (default) — cancels the in-flight animation, then starts the new one.
+//!   `AnimationCancelled` always fires; `ZoomCancelled` additionally fires if the in-flight
+//!   operation is a zoom:
 //!
 //!   ```text
-//!   ZoomCancelled → AnimationBegin (new) → …
-//!   ```
-//!
-//!   If the in-flight operation is a plain animation:
-//!
-//!   ```text
-//!   AnimationCancelled → AnimationBegin (new) → …
+//!   AnimationCancelled → ZoomCancelled (if zoom) → AnimationBegin (new) → …
 //!   ```
 //!
 //! - **`FirstWins`** — rejects the incoming request. No zoom lifecycle events fire — the rejection
