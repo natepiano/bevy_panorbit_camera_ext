@@ -362,7 +362,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy"),
+        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'H' Home w/animate fit to scene\n'A' animate camera\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy"),
         TextFont {
             font_size: UI_FONT_SIZE,
             ..default()
@@ -784,7 +784,7 @@ fn animate_fit_to_scene(
     scene: Res<SceneEntities>,
     easing: Res<ActiveEasing>,
 ) {
-    if !keyboard.just_pressed(KeyCode::KeyF) {
+    if !keyboard.just_pressed(KeyCode::KeyH) {
         return;
     }
 

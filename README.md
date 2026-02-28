@@ -1,6 +1,6 @@
 # bevy_panorbit_camera_ext
 
-<img src="assets/zoom_to_fit_visualization.png" alt="Zoom-to-fit visualization" width="600">
+<img src="assets/demo.gif" alt="Zoom-to-fit demo" width="600">
 
 Extension library for [`bevy_panorbit_camera`](https://github.com/Plonq/bevy_panorbit_camera) providing camera animation, zoom-to-fit, and helper utilities.
 
