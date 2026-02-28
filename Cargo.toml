@@ -4,12 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["visualization"]
+default = []
 visualization = []
 
 [dependencies]
 bevy = "0.18.0"
 bevy_panorbit_camera = "0.34.0"
 
+[[example]]
+name = "demo"
+required-features = ["visualization"]
+
 [dev-dependencies]
+bevy_panorbit_camera_ext = { path = ".", features = ["visualization"] }
 bevy_brp_extras = "0.18.6"
