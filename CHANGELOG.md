@@ -27,6 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lifecycle events: `ZoomBegin`/`ZoomEnd`/`ZoomCancelled`, `AnimationBegin`/`AnimationEnd`/`AnimationCancelled`, `CameraMoveBegin`/`CameraMoveEnd`
 - Perspective and orthographic projection support
 - Automatic camera smoothness stashing/restoration during animations
-- `visualization` feature flag (default-enabled) gating `FitTargetVisualizationConfig` and gizmo overlays
+- `visualization` feature flag (opt-in) gating `FitTargetVisualizationConfig` and gizmo overlays
 
 [0.1.0]: https://github.com/natepiano/bevy_panorbit_camera_ext/releases/tag/v0.1.0
