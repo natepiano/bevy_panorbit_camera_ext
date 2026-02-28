@@ -245,6 +245,7 @@ fn handle_empty_queue(
 }
 
 /// Handles external camera input interrupting the animation via Cancel or Complete.
+#[allow(clippy::too_many_arguments)]
 fn handle_interrupt(
     commands: &mut Commands,
     entity: Entity,

@@ -19,6 +19,7 @@ use crate::events::AnimationSource;
 use crate::events::PlayAnimation;
 use crate::events::SetFitTarget;
 use crate::events::ZoomBegin;
+use crate::events::ZoomCancelled;
 use crate::events::ZoomEnd;
 use crate::events::ZoomToFit;
 use crate::fit::FitSolution;
@@ -199,7 +200,7 @@ pub fn on_play_animation(
         Option<&SmoothnessStash>,
         Option<&AnimationSourceMarker>,
     )>,
-    marker_query: Query<(), With<ZoomAnimationMarker>>,
+    marker_query: Query<&ZoomAnimationMarker>,
 ) {
     let entity = start.camera_entity;
 
@@ -210,13 +211,22 @@ pub fn on_play_animation(
     // Use existing source marker if present (set by AnimateToFit), otherwise default
     let source = existing_source.map_or(AnimationSource::PlayAnimation, |m| m.0);
 
-    // Only fire `AnimationBegin` for user-initiated animations, not internal zoom animations
-    if marker_query.get(entity).is_err() {
-        commands.trigger(AnimationBegin {
+    // If a zoom is in-flight, cancel it before starting the new animation
+    if let Ok(marker) = marker_query.get(entity) {
+        commands.entity(entity).remove::<ZoomAnimationMarker>();
+        commands.trigger(ZoomCancelled {
             camera_entity: entity,
-            source,
+            target_entity: marker.target_entity,
+            margin:        marker.margin,
+            duration:      marker.duration,
+            easing:        marker.easing,
         });
     }
+
+    commands.trigger(AnimationBegin {
+        camera_entity: entity,
+        source,
+    });
 
     ensure_animation_smoothness(&mut commands, entity, &mut camera, existing_stash.is_some());
 
@@ -292,12 +302,12 @@ pub fn on_animate_to_fit(
         return;
     };
 
-    // Mark the source before triggering PlayAnimation so it picks up the correct source
-    commands
-        .entity(camera_entity)
-        .insert(AnimationSourceMarker(AnimationSource::AnimateToFit));
-
     if duration > Duration::ZERO {
+        // Mark the source before triggering `PlayAnimation` so it picks up the correct source.
+        // Only needed for the animated path — zero-duration fires events directly.
+        commands
+            .entity(camera_entity)
+            .insert(AnimationSourceMarker(AnimationSource::AnimateToFit));
         let camera_moves = VecDeque::from([CameraMove::ToOrbit {
             focus: fit.focus,
             yaw,

@@ -54,11 +54,19 @@ fn on_toggle_fit_visualization(
     trigger: On<ToggleFitVisualization>,
     mut commands: Commands,
     active_query: Query<(), With<VisualizationActive>>,
-    mut config_store: ResMut<GizmoConfigStore>,
+    config_store: Option<ResMut<GizmoConfigStore>>,
     label_query: Query<Entity, With<MarginLabel>>,
     bounds_label_query: Query<Entity, With<BoundsLabel>>,
 ) {
     let entity = trigger.camera_entity;
+
+    let Some(mut config_store) = config_store else {
+        warn!(
+            "`ToggleFitVisualization` triggered but `GizmoPlugin` is not present — \
+             gizmo visualization requires `GizmoPlugin` to be added to the app"
+        );
+        return;
+    };
 
     if active_query.get(entity).is_ok() {
         // Disable — remove marker, disable gizmo config, clean up labels
