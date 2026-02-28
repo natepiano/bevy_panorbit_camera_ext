@@ -6,7 +6,7 @@
 mod convex_hull;
 mod labels;
 mod screen_space;
-mod system;
+mod systems;
 mod types;
 
 use bevy::camera::visibility::RenderLayers;
@@ -14,8 +14,6 @@ use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 use labels::BoundsLabel;
 use labels::MarginLabel;
-use labels::cleanup_margin_labels;
-use system::draw_fit_target_bounds;
 pub use types::FitTargetGizmo;
 pub use types::FitTargetVisualizationConfig;
 
@@ -29,23 +27,26 @@ fn has_gizmo_subsystem(config_store: Option<Res<GizmoConfigStore>>) -> bool {
     config_store.is_some()
 }
 
-/// Registers all visualization systems and resources on the given `App`.
-pub fn register(app: &mut App) {
-    // Only initialize gizmo infrastructure when the gizmo plugin is present
-    // (absent in headless/test environments that skip `DefaultPlugins`).
-    if app.is_plugin_added::<bevy::gizmos::GizmoPlugin>() {
-        app.init_gizmo_group::<FitTargetGizmo>();
-    }
+pub struct VisualizationPlugin;
 
-    app.init_resource::<FitTargetVisualizationConfig>()
-        .add_observer(on_toggle_fit_visualization)
-        .add_systems(Startup, init_fit_target_gizmo.run_if(has_gizmo_subsystem))
-        .add_systems(
-            Update,
-            (sync_gizmo_render_layers, draw_fit_target_bounds)
-                .chain()
-                .run_if(any_with_component::<VisualizationActive>.and(has_gizmo_subsystem)),
-        );
+impl Plugin for VisualizationPlugin {
+    fn build(&self, app: &mut App) {
+        // Only initialize gizmo infrastructure when the gizmo plugin is present
+        // (absent in headless/test environments that skip `DefaultPlugins`).
+        if app.is_plugin_added::<bevy::gizmos::GizmoPlugin>() {
+            app.init_gizmo_group::<FitTargetGizmo>();
+        }
+
+        app.init_resource::<FitTargetVisualizationConfig>()
+            .add_observer(on_toggle_fit_visualization)
+            .add_systems(Startup, init_fit_target_gizmo.run_if(has_gizmo_subsystem))
+            .add_systems(
+                Update,
+                (sync_gizmo_render_layers, systems::draw_fit_target_bounds)
+                    .chain()
+                    .run_if(any_with_component::<VisualizationActive>.and(has_gizmo_subsystem)),
+            );
+    }
 }
 
 /// Observer that toggles `VisualizationActive` on the targeted camera entity and fires
@@ -76,7 +77,7 @@ fn on_toggle_fit_visualization(
 
         // Clean up all visualization labels since the system will no longer run
         if !label_query.is_empty() {
-            cleanup_margin_labels(commands.reborrow(), label_query);
+            labels::cleanup_margin_labels(commands.reborrow(), label_query);
         }
         for label_entity in &bounds_label_query {
             commands.entity(label_entity).despawn();

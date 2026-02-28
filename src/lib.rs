@@ -25,6 +25,7 @@ pub use animation::CameraMove;
 pub use animation::CameraMoveList;
 use animation::process_camera_move_list;
 // Components
+pub use components::AnimationConflictPolicy;
 pub use components::CurrentFitTarget;
 pub use components::InputInterruptBehavior;
 #[cfg(feature = "visualization")]
@@ -34,6 +35,7 @@ pub use events::AnimateToFit;
 pub use events::AnimationBegin;
 pub use events::AnimationCancelled;
 pub use events::AnimationEnd;
+pub use events::AnimationRejected;
 pub use events::AnimationSource;
 pub use events::CameraMoveBegin;
 pub use events::CameraMoveEnd;
@@ -76,8 +78,7 @@ impl Plugin for PanOrbitCameraExtPlugin {
             // Add systems
             .add_systems(Update, process_camera_move_list);
 
-        // Register visualization systems and resources
         #[cfg(feature = "visualization")]
-        visualization::register(app);
+        app.add_plugins(visualization::VisualizationPlugin);
     }
 }

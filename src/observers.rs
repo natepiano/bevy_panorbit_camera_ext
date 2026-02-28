@@ -3,18 +3,22 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
+use crate::components::AnimationConflictPolicy;
 use crate::components::AnimationSourceMarker;
 use crate::components::CurrentFitTarget;
 use crate::components::SmoothnessStash;
 use crate::components::ZoomAnimationMarker;
 use crate::events::AnimateToFit;
 use crate::events::AnimationBegin;
+use crate::events::AnimationCancelled;
 use crate::events::AnimationEnd;
+use crate::events::AnimationRejected;
 use crate::events::AnimationSource;
 use crate::events::PlayAnimation;
 use crate::events::SetFitTarget;
@@ -98,13 +102,20 @@ fn prepare_fit_for_target(
 /// When duration is `Duration::ZERO`, snaps instantly.
 /// When duration is greater than zero, animates smoothly.
 /// Requires target entity to have a `Mesh3d` (direct or on descendants).
+#[allow(clippy::too_many_arguments)]
 pub fn on_zoom_to_fit(
     zoom: On<ZoomToFit>,
     mut commands: Commands,
-    mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera)>,
+    mut camera_query: Query<(
+        &mut PanOrbitCamera,
+        &Projection,
+        &Camera,
+        Option<&AnimationConflictPolicy>,
+    )>,
     mesh_query: Query<&Mesh3d>,
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
+    move_list_query: Query<&CameraMoveList>,
     meshes: Res<Assets<Mesh>>,
 ) {
     let camera_entity = zoom.camera_entity;
@@ -113,9 +124,25 @@ pub fn on_zoom_to_fit(
     let duration = zoom.duration;
     let easing = zoom.easing;
 
-    let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
+    let Ok((mut camera, projection, cam, conflict_policy)) = camera_query.get_mut(camera_entity)
+    else {
         return;
     };
+
+    // Reject early when `FirstWins` is active and an animation is in-flight.
+    // This prevents `ZoomBegin` and `ZoomAnimationMarker` from leaking when the
+    // underlying `PlayAnimation` would be rejected.
+    if duration > Duration::ZERO {
+        let policy = conflict_policy.copied().unwrap_or_default();
+        let has_in_flight = move_list_query.get(camera_entity).is_ok();
+        if has_in_flight && policy == AnimationConflictPolicy::FirstWins {
+            commands.trigger(AnimationRejected {
+                camera_entity,
+                source: AnimationSource::ZoomToFit,
+            });
+            return;
+        }
+    }
 
     debug!(
         "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={:.0}",
@@ -162,15 +189,20 @@ pub fn on_zoom_to_fit(
             easing,
         }]);
 
-        // Mark this as a zoom operation so AnimationEnd fires ZoomEnd
+        // Trigger `PlayAnimation` BEFORE inserting `ZoomAnimationMarker` so that
+        // `on_play_animation` sees the old world state during conflict resolution.
+        // If inserted first, LastWins would cancel the NEW zoom's own marker.
+        commands.trigger(
+            PlayAnimation::new(camera_entity, camera_moves).source(AnimationSource::ZoomToFit),
+        );
+
+        // Mark this as a zoom operation so `AnimationEnd` fires `ZoomEnd`
         commands.entity(camera_entity).insert(ZoomAnimationMarker {
             target_entity,
             margin,
             duration,
             easing,
         });
-
-        commands.trigger(PlayAnimation::new(camera_entity, camera_moves));
     } else {
         // Instant path: snap directly to target
         camera.focus = fit.focus;
@@ -198,29 +230,70 @@ pub fn on_play_animation(
     mut camera_query: Query<(
         &mut PanOrbitCamera,
         Option<&SmoothnessStash>,
-        Option<&AnimationSourceMarker>,
+        Option<&AnimationConflictPolicy>,
     )>,
+    move_list_query: Query<&CameraMoveList>,
     marker_query: Query<&ZoomAnimationMarker>,
+    source_marker_query: Query<&AnimationSourceMarker>,
 ) {
     let entity = start.camera_entity;
+    let source = start.source;
 
-    let Ok((mut camera, existing_stash, existing_source)) = camera_query.get_mut(entity) else {
+    let Ok((mut camera, existing_stash, conflict_policy)) = camera_query.get_mut(entity) else {
         return;
     };
 
-    // Use existing source marker if present (set by AnimateToFit), otherwise default
-    let source = existing_source.map_or(AnimationSource::PlayAnimation, |m| m.0);
+    let policy = conflict_policy.copied().unwrap_or_default();
+    let has_in_flight = move_list_query.get(entity).is_ok();
 
-    // If a zoom is in-flight, cancel it before starting the new animation
-    if let Ok(marker) = marker_query.get(entity) {
-        commands.entity(entity).remove::<ZoomAnimationMarker>();
-        commands.trigger(ZoomCancelled {
-            camera_entity: entity,
-            target_entity: marker.target_entity,
-            margin:        marker.margin,
-            duration:      marker.duration,
-            easing:        marker.easing,
-        });
+    if has_in_flight {
+        match policy {
+            AnimationConflictPolicy::FirstWins => {
+                commands.trigger(AnimationRejected {
+                    camera_entity: entity,
+                    source,
+                });
+                return;
+            },
+            AnimationConflictPolicy::LastWins => {
+                // Cancel in-flight zoom if present
+                if let Ok(marker) = marker_query.get(entity) {
+                    commands.entity(entity).remove::<ZoomAnimationMarker>();
+                    commands.trigger(ZoomCancelled {
+                        camera_entity: entity,
+                        target_entity: marker.target_entity,
+                        margin:        marker.margin,
+                        duration:      marker.duration,
+                        easing:        marker.easing,
+                    });
+                } else {
+                    // Cancel in-flight animation — read source from existing marker
+                    let in_flight_source = source_marker_query
+                        .get(entity)
+                        .map_or(AnimationSource::PlayAnimation, |m| m.0);
+                    if let Ok(queue) = move_list_query.get(entity) {
+                        let camera_move =
+                            queue
+                                .camera_moves
+                                .front()
+                                .cloned()
+                                .unwrap_or(CameraMove::ToOrbit {
+                                    focus:    Vec3::ZERO,
+                                    yaw:      0.0,
+                                    pitch:    0.0,
+                                    radius:   1.0,
+                                    duration: Duration::ZERO,
+                                    easing:   EaseFunction::Linear,
+                                });
+                        commands.trigger(AnimationCancelled {
+                            camera_entity: entity,
+                            source: in_flight_source,
+                            camera_move,
+                        });
+                    }
+                }
+            },
+        }
     }
 
     commands.trigger(AnimationBegin {
@@ -230,15 +303,12 @@ pub fn on_play_animation(
 
     ensure_animation_smoothness(&mut commands, entity, &mut camera, existing_stash.is_some());
 
-    // Add the animation component; only set source marker if not already present
     commands
         .entity(entity)
         .insert(CameraMoveList::new(start.camera_moves.clone()));
-    if existing_source.is_none() {
-        commands
-            .entity(entity)
-            .insert(AnimationSourceMarker(source));
-    }
+    commands
+        .entity(entity)
+        .insert(AnimationSourceMarker(source));
 }
 
 /// Observer for direct `CameraMoveList` insertion (bypassing `PlayAnimation`).
@@ -303,11 +373,6 @@ pub fn on_animate_to_fit(
     };
 
     if duration > Duration::ZERO {
-        // Mark the source before triggering `PlayAnimation` so it picks up the correct source.
-        // Only needed for the animated path — zero-duration fires events directly.
-        commands
-            .entity(camera_entity)
-            .insert(AnimationSourceMarker(AnimationSource::AnimateToFit));
         let camera_moves = VecDeque::from([CameraMove::ToOrbit {
             focus: fit.focus,
             yaw,
@@ -316,7 +381,9 @@ pub fn on_animate_to_fit(
             duration,
             easing,
         }]);
-        commands.trigger(PlayAnimation::new(camera_entity, camera_moves));
+        commands.trigger(
+            PlayAnimation::new(camera_entity, camera_moves).source(AnimationSource::AnimateToFit),
+        );
     } else {
         camera.focus = fit.focus;
         camera.yaw = Some(yaw);

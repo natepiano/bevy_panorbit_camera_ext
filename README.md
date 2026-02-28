@@ -85,6 +85,33 @@ commands.trigger(PlayAnimation::new(camera_entity, moves));
 - `ToPosition` — world-space translation + focus (cinematic sequences)
 - `ToOrbit` — orbital parameters around a focus (inspection, zoom-to-fit)
 
+### Animation Behavior
+
+Two components control how animations respond to conflicts and interruptions:
+
+**`AnimationConflictPolicy`** — what happens when a new animation request arrives while
+one is already playing:
+
+- `LastWins` (default) — cancel the current animation, start the new one
+- `FirstWins` — reject the new request, current animation continues
+
+**`InputInterruptBehavior`** — what happens when the user physically moves the camera
+during an animation:
+
+- `Cancel` (default) — stop the animation at its current position
+- `Complete` — jump to the final position of the animation
+
+These are orthogonal — `AnimationConflictPolicy` guards against programmatic conflicts,
+`InputInterruptBehavior` guards against user input.
+
+```rust
+commands.spawn((
+    PanOrbitCamera::default(),
+    AnimationConflictPolicy::FirstWins,
+    InputInterruptBehavior::Complete,
+));
+```
+
 ### `SetFitTarget`
 
 Sets the debug visualization target entity on a camera without triggering any zoom or animation. This lets you inspect the debug gizmos (bounding box, margins, screen-space bounds) for an entity before deciding to invoke one of the zoom/animation behaviors.

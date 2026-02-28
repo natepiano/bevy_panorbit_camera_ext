@@ -7,16 +7,113 @@
 //! # Common patterns
 //!
 //! **Duration** — several events accept a `duration` field. When set to
-//! `Duration::ZERO` the operation completes instantly and both the `Begin` and `End`
-//! events fire in the same frame. When `duration > Duration::ZERO` the operation
-//! animates over time and the `End` event fires on the frame the animation finishes.
+//! `Duration::ZERO` the operation completes instantly — the camera snaps to its
+//! final position and only the **operation-level** begin/end events fire (see
+//! [instant paths](#instant-operations) below). When `duration > Duration::ZERO`
+//! the operation animates over time through [`PlayAnimation`], so the full nested
+//! event sequence fires.
 //!
 //! **Easing** — events that animate also accept an `easing` field
 //! ([`EaseFunction`]) that controls the interpolation curve. This only has an effect
 //! when `duration > Duration::ZERO`.
 //!
+//! # Event ordering
+//!
+//! Events nest from outermost (operation-level) to innermost (move-level). Every
+//! animated path goes through [`PlayAnimation`], so [`AnimationBegin`]/[`AnimationEnd`]
+//! and [`CameraMoveBegin`]/[`CameraMoveEnd`] fire for **all** animated operations —
+//! including [`ZoomToFit`] and [`AnimateToFit`].
+//!
+//! ## `PlayAnimation` — normal completion
+//!
+//! ```text
+//! AnimationBegin → CameraMoveBegin → CameraMoveEnd → … → AnimationEnd
+//! ```
+//!
+//! ## `ZoomToFit` (animated) — normal completion
+//!
+//! `Zoom*` events wrap the animation lifecycle:
+//!
+//! ```text
+//! ZoomBegin → AnimationBegin → CameraMoveBegin → CameraMoveEnd → AnimationEnd → ZoomEnd
+//! ```
+//!
+//! ## `AnimateToFit` (animated) — normal completion
+//!
+//! No extra wrapping events — uses `source: AnimationSource::AnimateToFit` to
+//! distinguish from a plain [`PlayAnimation`]:
+//!
+//! ```text
+//! AnimationBegin → CameraMoveBegin → CameraMoveEnd → AnimationEnd
+//! ```
+//!
+//! ## Instant operations
+//!
+//! When `duration` is `Duration::ZERO`, the animation system is bypassed entirely.
+//! Only the operation-level events fire — no [`AnimationBegin`]/[`AnimationEnd`] or
+//! [`CameraMoveBegin`]/[`CameraMoveEnd`].
+//!
+//! ### `ZoomToFit` (instant)
+//!
+//! ```text
+//! ZoomBegin → ZoomEnd
+//! ```
+//!
+//! ### `AnimateToFit` (instant)
+//!
+//! Fires animation-level events (to notify observers) but no camera-move-level events:
+//!
+//! ```text
+//! AnimationBegin → AnimationEnd
+//! ```
+//!
+//! ## User input interruption ([`InputInterruptBehavior`](crate::InputInterruptBehavior))
+//!
+//! When the user physically moves the camera during an animation:
+//!
+//! - **`Cancel`** (default) — stops where it is:
+//!
+//!   ```text
+//!   … → AnimationCancelled → ZoomCancelled (if zoom)
+//!   ```
+//!
+//! - **`Complete`** — jumps to the final position:
+//!
+//!   ```text
+//!   … → AnimationEnd → ZoomEnd (if zoom)
+//!   ```
+//!
+//! ## Animation conflict ([`AnimationConflictPolicy`](crate::AnimationConflictPolicy))
+//!
+//! When a new animation request arrives while one is already in-flight:
+//!
+//! - **`LastWins`** (default) — cancels the in-flight animation, then starts the new one. If the
+//!   in-flight operation is a zoom:
+//!
+//!   ```text
+//!   ZoomCancelled → AnimationBegin (new) → …
+//!   ```
+//!
+//!   If the in-flight operation is a plain animation:
+//!
+//!   ```text
+//!   AnimationCancelled → AnimationBegin (new) → …
+//!   ```
+//!
+//! - **`FirstWins`** — rejects the incoming request. No zoom lifecycle events fire — the rejection
+//!   is detected before `ZoomBegin`:
+//!
+//!   ```text
+//!   AnimationRejected
+//!   ```
+//!
+//!   The [`AnimationRejected::source`] field identifies what was rejected
+//!   ([`AnimationSource::PlayAnimation`], [`AnimationSource::ZoomToFit`], or
+//!   [`AnimationSource::AnimateToFit`]).
+//!
 //! # Emitted event data
-//! Reference of data carried by events - for comparison purposes.
+//!
+//! Reference of data carried by events — for comparison purposes.
 //!
 //! | Event                    | `camera_entity` | `target_entity` | `margin` | `duration` | `easing` | `source` | `camera_move` |
 //! |--------------------------|-----------------|-----------------|----------|------------|----------|----------|---------------|
@@ -26,6 +123,7 @@
 //! | [`AnimationBegin`]       | yes             | —               | —        | —          | —        | yes      | —             |
 //! | [`AnimationEnd`]         | yes             | —               | —        | —          | —        | yes      | —             |
 //! | [`AnimationCancelled`]   | yes             | —               | —        | —          | —        | yes      | yes           |
+//! | [`AnimationRejected`]    | yes             | —               | —        | —          | —        | yes      | —             |
 //! | [`CameraMoveBegin`]      | yes             | —               | —        | —          | —        | —        | yes           |
 //! | [`CameraMoveEnd`]        | yes             | —               | —        | —          | —        | —        | yes           |
 
@@ -39,13 +137,15 @@ use crate::animation::CameraMove;
 
 /// Identifies which event triggered an animation lifecycle.
 ///
-/// Carried by [`AnimationBegin`], [`AnimationEnd`], and [`AnimationCancelled`] so
-/// observers know whether the animation originated from [`PlayAnimation`] or
-/// [`AnimateToFit`].
+/// Carried by [`AnimationBegin`], [`AnimationEnd`], [`AnimationCancelled`], and
+/// [`AnimationRejected`] so observers know whether the animation originated from
+/// [`PlayAnimation`], [`ZoomToFit`], or [`AnimateToFit`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Reflect)]
 pub enum AnimationSource {
     /// Animation was triggered by [`PlayAnimation`].
     PlayAnimation,
+    /// Animation was triggered by [`ZoomToFit`].
+    ZoomToFit,
     /// Animation was triggered by [`AnimateToFit`].
     AnimateToFit,
 }
@@ -60,8 +160,10 @@ pub enum AnimationSource {
 /// - `duration` — see module-level docs on **Duration**.
 /// - `easing` — see module-level docs on **Easing**.
 ///
-/// Fires [`ZoomBegin`] → [`ZoomEnd`] on success, or [`ZoomCancelled`] if the user
-/// interrupts with camera input during an animated zoom.
+/// Animated zooms route through [`PlayAnimation`], so the full event sequence is
+/// `ZoomBegin` → `AnimationBegin` → `CameraMoveBegin` → `CameraMoveEnd` →
+/// `AnimationEnd` → `ZoomEnd`. See the [module-level event ordering](self#event-ordering)
+/// docs for interruption and conflict scenarios.
 ///
 /// Trigger [`ToggleFitVisualization`] to see a debug visualization of the chosen
 /// `ZoomToFit` target. The last chosen target is preserved on the camera so you can
@@ -143,8 +245,15 @@ pub struct ZoomEnd {
     pub easing:        EaseFunction,
 }
 
-/// `ZoomCancelled` — emitted when a [`ZoomToFit`] animation is cancelled by external
-/// camera input. The camera stays at its current position — no snap to final.
+/// `ZoomCancelled` — emitted when a [`ZoomToFit`] animation is cancelled before
+/// completion. The camera stays at its current position — no snap to final.
+///
+/// Cancellation happens in two scenarios:
+/// - **User input** — the user physically moves the camera while
+///   [`InputInterruptBehavior::Cancel`](crate::InputInterruptBehavior::Cancel) is active.
+/// - **Animation conflict** — a new animation request arrives while
+///   [`AnimationConflictPolicy::LastWins`](crate::AnimationConflictPolicy::LastWins) is active,
+///   cancelling the in-flight zoom.
 ///
 /// - `camera_entity` — the camera whose zoom was cancelled.
 /// - `target_entity` — the entity that was being framed.
@@ -169,20 +278,25 @@ pub struct ZoomCancelled {
 ///   [`VecDeque`], etc.). Each [`CameraMove`] is either a `ToPosition` (world-space translation +
 ///   focus) or a `ToOrbit` (orbital parameters around a focus point), each with its own duration
 ///   and easing.
+/// - `source` — the [`AnimationSource`] identifying the origin of this animation. Defaults to
+///   [`AnimationSource::PlayAnimation`]; set to [`AnimationSource::ZoomToFit`] or
+///   [`AnimationSource::AnimateToFit`] via the `.source()` builder when the animation originates
+///   from [`ZoomToFit`] or [`AnimateToFit`].
 ///
 /// ```rust,ignore
 /// commands.trigger(PlayAnimation::new(camera, [move1, move2, move3]));
 /// ```
 ///
-/// Fires [`AnimationBegin`] at queue start, then [`CameraMoveBegin`] →
-/// [`CameraMoveEnd`] for each move, and finally [`AnimationEnd`] when the queue is
-/// drained. [`AnimationCancelled`] fires if the user interrupts with camera input.
+/// Fires `AnimationBegin` → (`CameraMoveBegin` → `CameraMoveEnd`) × N → `AnimationEnd`.
+/// See the [module-level event ordering](self#event-ordering) docs for interruption and
+/// conflict scenarios.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct PlayAnimation {
     #[event_target]
     pub camera_entity: Entity,
     pub camera_moves:  VecDeque<CameraMove>,
+    pub source:        AnimationSource,
 }
 
 impl PlayAnimation {
@@ -190,7 +304,13 @@ impl PlayAnimation {
         Self {
             camera_entity,
             camera_moves: camera_moves.into_iter().collect(),
+            source: AnimationSource::PlayAnimation,
         }
+    }
+
+    pub fn source(mut self, source: AnimationSource) -> Self {
+        self.source = source;
+        self
     }
 }
 
@@ -219,8 +339,15 @@ pub struct AnimationEnd {
 }
 
 /// `AnimationCancelled` — emitted when a [`PlayAnimation`] or [`AnimateToFit`] is
-/// cancelled by external camera input. The camera stays at its current position — no
-/// snap to final.
+/// cancelled before completion. The camera stays at its current position — no snap to
+/// final.
+///
+/// Cancellation happens in two scenarios:
+/// - **User input** — the user physically moves the camera while
+///   [`InputInterruptBehavior::Cancel`](crate::InputInterruptBehavior::Cancel) is active.
+/// - **Animation conflict** — a new animation request arrives while
+///   [`AnimationConflictPolicy::LastWins`](crate::AnimationConflictPolicy::LastWins) is active,
+///   cancelling the in-flight (non-zoom) animation.
 ///
 /// - `camera_entity` — the camera whose animation was cancelled.
 /// - `source` — whether this animation originated from [`PlayAnimation`] or [`AnimateToFit`].
@@ -232,6 +359,22 @@ pub struct AnimationCancelled {
     pub camera_entity: Entity,
     pub source:        AnimationSource,
     pub camera_move:   CameraMove,
+}
+
+/// `AnimationRejected` — emitted when an incoming animation request is rejected because
+/// [`AnimationConflictPolicy::FirstWins`](crate::AnimationConflictPolicy::FirstWins) is
+/// active and an animation is already in-flight.
+///
+/// The in-flight animation continues uninterrupted.
+///
+/// - `camera_entity` — the camera that rejected the animation.
+/// - `source` — the [`AnimationSource`] of the rejected request.
+#[derive(EntityEvent, Reflect)]
+#[reflect(Event, FromReflect)]
+pub struct AnimationRejected {
+    #[event_target]
+    pub camera_entity: Entity,
+    pub source:        AnimationSource,
 }
 
 /// `CameraMoveBegin` — emitted when an individual [`CameraMove`] begins.
@@ -270,10 +413,10 @@ pub struct CameraMoveEnd {
 /// - `easing` — see module-level docs on **Easing**.
 ///
 /// Combines orientation change with zoom-to-fit in a single smooth animation.
-/// Unlike [`ZoomToFit`], this fires [`AnimationBegin`]/[`AnimationEnd`] rather than
-/// [`ZoomBegin`]/[`ZoomEnd`]. `ZoomToFit` is a pure framing operation (preserves the
-/// current camera angle), while `AnimateToFit` is a cinematic move that changes yaw and
-/// pitch — so it uses the general animation lifecycle instead.
+/// Unlike [`ZoomToFit`], this does not fire [`ZoomBegin`]/[`ZoomEnd`] — only the
+/// standard animation events with `source: AnimationSource::AnimateToFit`.
+/// See the [module-level event ordering](self#event-ordering) docs for the full
+/// sequence and interruption/conflict scenarios.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct AnimateToFit {

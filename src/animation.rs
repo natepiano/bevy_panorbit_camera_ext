@@ -227,6 +227,10 @@ fn handle_empty_queue(
     commands
         .entity(entity)
         .remove::<(CameraMoveList, AnimationSourceMarker)>();
+    commands.trigger(AnimationEnd {
+        camera_entity: entity,
+        source,
+    });
     if let Some(marker) = zoom_marker {
         commands.entity(entity).remove::<ZoomAnimationMarker>();
         commands.trigger(ZoomEnd {
@@ -235,11 +239,6 @@ fn handle_empty_queue(
             margin:        marker.margin,
             duration:      marker.duration,
             easing:        marker.easing,
-        });
-    } else {
-        commands.trigger(AnimationEnd {
-            camera_entity: entity,
-            source,
         });
     }
 }
@@ -262,6 +261,11 @@ fn handle_interrupt(
             commands
                 .entity(entity)
                 .remove::<(CameraMoveList, AnimationSourceMarker)>();
+            commands.trigger(AnimationCancelled {
+                camera_entity: entity,
+                source,
+                camera_move: current_move.clone(),
+            });
             if let Some(marker) = zoom_marker {
                 commands.entity(entity).remove::<ZoomAnimationMarker>();
                 commands.trigger(ZoomCancelled {
@@ -270,12 +274,6 @@ fn handle_interrupt(
                     margin:        marker.margin,
                     duration:      marker.duration,
                     easing:        marker.easing,
-                });
-            } else {
-                commands.trigger(AnimationCancelled {
-                    camera_entity: entity,
-                    source,
-                    camera_move: current_move.clone(),
                 });
             }
         },
@@ -293,6 +291,10 @@ fn handle_interrupt(
             commands
                 .entity(entity)
                 .remove::<(CameraMoveList, AnimationSourceMarker)>();
+            commands.trigger(AnimationEnd {
+                camera_entity: entity,
+                source,
+            });
             if let Some(marker) = zoom_marker {
                 commands.entity(entity).remove::<ZoomAnimationMarker>();
                 commands.trigger(ZoomEnd {
@@ -301,11 +303,6 @@ fn handle_interrupt(
                     margin:        marker.margin,
                     duration:      marker.duration,
                     easing:        marker.easing,
-                });
-            } else {
-                commands.trigger(AnimationEnd {
-                    camera_entity: entity,
-                    source,
                 });
             }
         },
@@ -320,15 +317,12 @@ fn handle_ready_state(
     pan_orbit: &mut PanOrbitCamera,
     queue: &mut CameraMoveList,
     current_move: &CameraMove,
-    is_zoom: bool,
 ) -> bool {
     if current_move.duration().is_zero() {
-        if !is_zoom {
-            commands.trigger(CameraMoveBegin {
-                camera_entity: entity,
-                camera_move:   current_move.clone(),
-            });
-        }
+        commands.trigger(CameraMoveBegin {
+            camera_entity: entity,
+            camera_move:   current_move.clone(),
+        });
 
         let (target_yaw, target_pitch, target_radius) = current_move.orbital_params();
         pan_orbit.target_focus = current_move.focus();
@@ -337,12 +331,10 @@ fn handle_ready_state(
         pan_orbit.target_pitch = target_pitch;
         pan_orbit.force_update = true;
 
-        if !is_zoom {
-            commands.trigger(CameraMoveEnd {
-                camera_entity: entity,
-                camera_move:   current_move.clone(),
-            });
-        }
+        commands.trigger(CameraMoveEnd {
+            camera_entity: entity,
+            camera_move:   current_move.clone(),
+        });
         queue.camera_moves.pop_front();
         return true;
     }
@@ -360,19 +352,16 @@ fn handle_ready_state(
         last_written_radius: pan_orbit.target_radius,
     };
 
-    if !is_zoom {
-        commands.trigger(CameraMoveBegin {
-            camera_entity: entity,
-            camera_move:   current_move.clone(),
-        });
-    }
+    commands.trigger(CameraMoveBegin {
+        camera_entity: entity,
+        camera_move:   current_move.clone(),
+    });
 
     false
 }
 
 /// Interpolates the current move, applies easing with angle unwrapping, and advances
 /// the queue when the frame completes.
-#[allow(clippy::too_many_arguments)]
 fn handle_in_progress(
     commands: &mut Commands,
     entity: Entity,
@@ -380,7 +369,6 @@ fn handle_in_progress(
     queue: &mut CameraMoveList,
     current_move: &CameraMove,
     delta_secs: f32,
-    is_zoom: bool,
 ) {
     let MoveState::InProgress {
         elapsed_ms,
@@ -451,12 +439,10 @@ fn handle_in_progress(
 
     // Check if move complete and advance to next
     if is_final_frame {
-        if !is_zoom {
-            commands.trigger(CameraMoveEnd {
-                camera_entity: entity,
-                camera_move:   current_move.clone(),
-            });
-        }
+        commands.trigger(CameraMoveEnd {
+            camera_entity: entity,
+            camera_move:   current_move.clone(),
+        });
         queue.camera_moves.pop_front();
         queue.state = MoveState::Ready;
     }
@@ -484,7 +470,6 @@ pub fn process_camera_move_list(
         &mut camera_query
     {
         let source = source_marker.map_or(AnimationSource::PlayAnimation, |m| m.0);
-        let is_zoom = zoom_marker.is_some();
 
         let Some(current_move) = queue.camera_moves.front().cloned() else {
             handle_empty_queue(&mut commands, entity, source, zoom_marker);
@@ -513,7 +498,6 @@ pub fn process_camera_move_list(
                     &mut pan_orbit,
                     &mut queue,
                     &current_move,
-                    is_zoom,
                 ) {
                     continue;
                 }
@@ -526,7 +510,6 @@ pub fn process_camera_move_list(
                     &mut queue,
                     &current_move,
                     time.delta_secs(),
-                    is_zoom,
                 );
             },
         }

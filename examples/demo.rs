@@ -18,6 +18,7 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::light::DirectionalLightShadowMap;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
+use bevy::time::Virtual;
 use bevy_brp_extras::BrpExtrasPlugin;
 use bevy_panorbit_camera::PanOrbitCamera;
 use bevy_panorbit_camera::PanOrbitCameraPlugin;
@@ -25,7 +26,9 @@ use bevy_panorbit_camera::TrackpadBehavior;
 use bevy_panorbit_camera_ext::AnimateToFit;
 use bevy_panorbit_camera_ext::AnimationBegin;
 use bevy_panorbit_camera_ext::AnimationCancelled;
+use bevy_panorbit_camera_ext::AnimationConflictPolicy;
 use bevy_panorbit_camera_ext::AnimationEnd;
+use bevy_panorbit_camera_ext::AnimationRejected;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
@@ -103,14 +106,19 @@ fn main() {
         .add_systems(
             Update,
             (
+                toggle_pause,
                 draw_selection_gizmo,
-                toggle_debug_visualization,
-                toggle_projection,
-                randomize_easing,
-                animate_camera,
-                animate_fit_to_scene,
-                toggle_interrupt_behavior,
                 update_event_log_text,
+                (
+                    toggle_debug_visualization,
+                    toggle_projection,
+                    randomize_easing,
+                    animate_camera,
+                    animate_fit_to_scene,
+                    toggle_interrupt_behavior,
+                    toggle_animation_conflict_policy,
+                )
+                    .run_if(not_paused),
             ),
         )
         .add_observer(log_animation_start)
@@ -123,6 +131,7 @@ fn main() {
         .add_observer(log_zoom_cancelled)
         .add_observer(log_fit_visualization_begin)
         .add_observer(log_fit_visualization_end)
+        .add_observer(log_animation_rejected)
         .run();
 }
 
@@ -134,6 +143,12 @@ struct EventLogNode;
 
 #[derive(Component)]
 struct InputInterruptBehaviorLabel;
+
+#[derive(Component)]
+struct AnimationConflictPolicyLabel;
+
+#[derive(Component)]
+struct PausedOverlay;
 
 struct EventLine {
     text:      String,
@@ -326,7 +341,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'C' reset to 'CubicOut' easing\n'I' toggle interrupt behavior"),
+        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'C' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy"),
         TextFont {
             font_size: 13.0,
             ..default()
@@ -356,6 +371,23 @@ fn setup(
         InputInterruptBehaviorLabel,
     ));
 
+    // Conflict policy hint (bottom-left, above interrupt behavior)
+    commands.spawn((
+        Text::new(conflict_policy_hint_text(AnimationConflictPolicy::LastWins)),
+        TextFont {
+            font_size: 13.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.7, 0.7, 0.7, 0.7)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(32.0),
+            left: Val::Px(12.0),
+            ..default()
+        },
+        AnimationConflictPolicyLabel,
+    ));
+
     // Event log display (top-right, grows downward)
     commands.spawn((
         Text::new(""),
@@ -371,6 +403,25 @@ fn setup(
             ..default()
         },
         EventLogNode,
+    ));
+
+    // Paused overlay (centered, hidden until Esc)
+    commands.spawn((
+        Text::new("PAUSED"),
+        TextFont {
+            font_size: 48.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.4)),
+        TextLayout::new_with_justify(Justify::Center),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(46.0),
+            width: Val::Percent(100.0),
+            ..default()
+        },
+        Visibility::Hidden,
+        PausedOverlay,
     ));
 
     commands.insert_resource(SceneEntities {
@@ -403,13 +454,40 @@ fn initial_fit_to_scene(
     next_state.set(AppState::Running);
 }
 
+fn not_paused(time: Res<Time<Virtual>>) -> bool { !time.is_paused() }
+
+fn toggle_pause(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut time: ResMut<Time<Virtual>>,
+    mut overlay: Query<&mut Visibility, With<PausedOverlay>>,
+) {
+    if !keyboard.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    if time.is_paused() {
+        time.unpause();
+        for mut vis in &mut overlay {
+            *vis = Visibility::Hidden;
+        }
+    } else {
+        time.pause();
+        for mut vis in &mut overlay {
+            *vis = Visibility::Inherited;
+        }
+    }
+}
+
 fn on_mesh_clicked(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
     selected: Query<Entity, With<Selected>>,
     active_easing: Res<ActiveEasing>,
+    time: Res<Time<Virtual>>,
 ) {
+    if time.is_paused() {
+        return;
+    }
     for entity in &selected {
         commands.entity(entity).remove::<Selected>();
     }
@@ -430,7 +508,11 @@ fn on_ground_clicked(
     scene: Res<SceneEntities>,
     selected: Query<Entity, With<Selected>>,
     active_easing: Res<ActiveEasing>,
+    time: Res<Time<Virtual>>,
 ) {
+    if time.is_paused() {
+        return;
+    }
     for entity in &selected {
         commands.entity(entity).remove::<Selected>();
     }
@@ -449,7 +531,11 @@ fn on_below_clicked(
     scene: Res<SceneEntities>,
     selected: Query<Entity, With<Selected>>,
     active_easing: Res<ActiveEasing>,
+    time: Res<Time<Virtual>>,
 ) {
+    if time.is_paused() {
+        return;
+    }
     for entity in &selected {
         commands.entity(entity).remove::<Selected>();
     }
@@ -464,7 +550,14 @@ fn on_below_clicked(
     );
 }
 
-fn on_mesh_dragged(drag: On<Pointer<Drag>>, mut transforms: Query<&mut Transform>) {
+fn on_mesh_dragged(
+    drag: On<Pointer<Drag>>,
+    mut transforms: Query<&mut Transform>,
+    time: Res<Time<Virtual>>,
+) {
+    if time.is_paused() {
+        return;
+    }
     if let Ok(mut transform) = transforms.get_mut(drag.entity) {
         transform.rotate_y(drag.delta.x * DRAG_SENSITIVITY);
         transform.rotate_x(drag.delta.y * DRAG_SENSITIVITY);
@@ -689,7 +782,7 @@ fn toggle_projection(
 fn interrupt_behavior_hint_text(behavior: InputInterruptBehavior) -> String {
     match behavior {
         InputInterruptBehavior::Cancel => {
-            "InterruptBehavior::Cancel - camera input during animation will cancel it".into()
+            "InputInterruptBehavior::Cancel - camera input during animation will cancel it".into()
         },
         InputInterruptBehavior::Complete => {
             "InputInterruptBehavior::Complete - camera input during animation will jump to final position"
@@ -735,6 +828,55 @@ fn toggle_interrupt_behavior(
     log.push(format!("InputInterruptBehavior: {new_behavior:?}"), &time);
 }
 
+fn conflict_policy_hint_text(policy: AnimationConflictPolicy) -> String {
+    match policy {
+        AnimationConflictPolicy::LastWins => {
+            "AnimationConflictPolicy::LastWins - new animation cancels current one".into()
+        },
+        AnimationConflictPolicy::FirstWins => {
+            "AnimationConflictPolicy::FirstWins - new animation is rejected while one is playing"
+                .into()
+        },
+    }
+}
+
+fn toggle_animation_conflict_policy(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    scene: Res<SceneEntities>,
+    mut policy_query: Query<&mut AnimationConflictPolicy>,
+    mut hint_query: Query<&mut Text, With<AnimationConflictPolicyLabel>>,
+    time: Res<Time>,
+    mut log: ResMut<EventLog>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyQ) {
+        return;
+    }
+
+    let Ok(mut policy) = policy_query.get_mut(scene.camera) else {
+        // No `AnimationConflictPolicy` on camera yet — insert one (toggled from default)
+        commands
+            .entity(scene.camera)
+            .insert(AnimationConflictPolicy::FirstWins);
+        for mut text in &mut hint_query {
+            **text = conflict_policy_hint_text(AnimationConflictPolicy::FirstWins);
+        }
+        log.push("AnimationConflictPolicy: FirstWins".into(), &time);
+        return;
+    };
+
+    let new_policy = match *policy {
+        AnimationConflictPolicy::LastWins => AnimationConflictPolicy::FirstWins,
+        AnimationConflictPolicy::FirstWins => AnimationConflictPolicy::LastWins,
+    };
+    *policy = new_policy;
+
+    for mut text in &mut hint_query {
+        **text = conflict_policy_hint_text(new_policy);
+    }
+    log.push(format!("AnimationConflictPolicy: {new_policy:?}"), &time);
+}
+
 // ============================================================================
 // Event log
 // ============================================================================
@@ -758,8 +900,8 @@ fn log_animation_start(event: On<AnimationBegin>, time: Res<Time>, mut log: ResM
     );
 }
 
-fn log_animation_begin(_event: On<AnimationEnd>, time: Res<Time>, mut log: ResMut<EventLog>) {
-    log.push("AnimationEnd".into(), &time);
+fn log_animation_begin(event: On<AnimationEnd>, time: Res<Time>, mut log: ResMut<EventLog>) {
+    log.push(format!("AnimationEnd\n  source={:?}", event.source), &time);
 }
 
 fn log_camera_move_start(event: On<CameraMoveBegin>, time: Res<Time>, mut log: ResMut<EventLog>) {
@@ -813,6 +955,17 @@ fn log_animation_cancelled(
 
 fn log_zoom_cancelled(_event: On<ZoomCancelled>, time: Res<Time>, mut log: ResMut<EventLog>) {
     log.push("ZoomCancelled".to_string(), &time);
+}
+
+fn log_animation_rejected(
+    event: On<AnimationRejected>,
+    time: Res<Time>,
+    mut log: ResMut<EventLog>,
+) {
+    log.push(
+        format!("AnimationRejected\n  source={:?}", event.source),
+        &time,
+    );
 }
 
 fn log_fit_visualization_begin(

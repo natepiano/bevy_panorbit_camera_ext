@@ -7,7 +7,9 @@ use bevy_panorbit_camera::PanOrbitCamera;
 use bevy_panorbit_camera_ext::AnimateToFit;
 use bevy_panorbit_camera_ext::AnimationBegin;
 use bevy_panorbit_camera_ext::AnimationCancelled;
+use bevy_panorbit_camera_ext::AnimationConflictPolicy;
 use bevy_panorbit_camera_ext::AnimationEnd;
+use bevy_panorbit_camera_ext::AnimationRejected;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveList;
 use bevy_panorbit_camera_ext::CurrentFitTarget;
@@ -24,6 +26,7 @@ enum LifecycleEvent {
     AnimationBegin,
     AnimationEnd,
     AnimationCancelled,
+    AnimationRejected,
     ZoomBegin,
     ZoomEnd,
 }
@@ -43,6 +46,10 @@ fn record_animation_cancelled(_: On<AnimationCancelled>, mut log: ResMut<EventLo
     log.0.push(LifecycleEvent::AnimationCancelled);
 }
 
+fn record_animation_rejected(_: On<AnimationRejected>, mut log: ResMut<EventLog>) {
+    log.0.push(LifecycleEvent::AnimationRejected);
+}
+
 fn record_zoom_begin(_: On<ZoomBegin>, mut log: ResMut<EventLog>) {
     log.0.push(LifecycleEvent::ZoomBegin);
 }
@@ -56,6 +63,7 @@ fn add_lifecycle_log_observers(app: &mut App) {
     app.add_observer(record_animation_begin);
     app.add_observer(record_animation_end);
     app.add_observer(record_animation_cancelled);
+    app.add_observer(record_animation_rejected);
     app.add_observer(record_zoom_begin);
     app.add_observer(record_zoom_end);
 }
@@ -448,4 +456,162 @@ fn normal_completion_restores_smoothness_after_queue_finishes() {
     assert_eq!(camera.zoom_smoothness, 0.45);
     assert_eq!(camera.pan_smoothness, 0.55);
     assert_eq!(camera.orbit_smoothness, 0.65);
+}
+
+#[test]
+fn conflict_last_wins_animation_cancels_animation() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app
+        .world_mut()
+        .spawn((PanOrbitCamera::default(), AnimationConflictPolicy::LastWins))
+        .id();
+
+    // Start first animation (long duration so it's still in-flight)
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(5000))]),
+    ));
+    app.update();
+
+    // Clear the log to isolate the second trigger's events
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    // Trigger second animation while first is in-flight
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(500))]),
+    ));
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![
+            LifecycleEvent::AnimationCancelled,
+            LifecycleEvent::AnimationBegin,
+        ]
+    );
+}
+
+#[test]
+fn conflict_first_wins_rejects_second() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app
+        .world_mut()
+        .spawn((
+            PanOrbitCamera::default(),
+            AnimationConflictPolicy::FirstWins,
+        ))
+        .id();
+
+    // Start first animation
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(5000))]),
+    ));
+    app.update();
+
+    // Clear the log
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    // Trigger second animation — should be rejected
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(500))]),
+    ));
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(log.0, vec![LifecycleEvent::AnimationRejected]);
+
+    // Original queue should still be present
+    assert!(app.world().get::<CameraMoveList>(camera_entity).is_some());
+}
+
+#[test]
+fn conflict_first_wins_allows_after_completion() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app
+        .world_mut()
+        .spawn((
+            PanOrbitCamera::default(),
+            AnimationConflictPolicy::FirstWins,
+        ))
+        .id();
+
+    // Start a zero-duration animation (completes instantly)
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::ZERO)]),
+    ));
+    app.update();
+    app.update();
+    app.update();
+
+    // Clear the log
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    // New animation should succeed since queue is gone
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::ZERO)]),
+    ));
+    app.update();
+    app.update();
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![LifecycleEvent::AnimationBegin, LifecycleEvent::AnimationEnd]
+    );
+}
+
+#[test]
+fn conflict_default_is_last_wins() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    // No AnimationConflictPolicy component — should default to LastWins
+    let camera_entity = app.world_mut().spawn(PanOrbitCamera::default()).id();
+
+    // Start first animation
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(5000))]),
+    ));
+    app.update();
+
+    // Clear the log
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    // Trigger second animation — should cancel first (LastWins behavior)
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(500))]),
+    ));
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![
+            LifecycleEvent::AnimationCancelled,
+            LifecycleEvent::AnimationBegin,
+        ]
+    );
 }

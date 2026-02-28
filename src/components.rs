@@ -7,10 +7,15 @@ use bevy::prelude::*;
 
 use crate::events::AnimationSource;
 
-/// Configures what happens when external camera input interrupts an animation.
+/// Controls what happens when **user input** (orbit, pan, zoom) occurs during an
+/// in-flight animation.
 ///
 /// This is a required component on [`CameraMoveList`](crate::CameraMoveList) — if not
 /// explicitly inserted, it defaults to [`Cancel`](InputInterruptBehavior::Cancel).
+///
+/// This component is orthogonal to [`AnimationConflictPolicy`] — `InputInterruptBehavior`
+/// handles physical camera input during an animation, while `AnimationConflictPolicy`
+/// handles programmatic animation requests that arrive while one is already playing.
 ///
 /// - [`Cancel`](InputInterruptBehavior::Cancel) — stop the camera where it is and fire `*Cancelled`
 ///   events
@@ -24,6 +29,29 @@ pub enum InputInterruptBehavior {
     Cancel,
     /// Jump to the final queued position. Fires `AnimationEnd` or `ZoomEnd`.
     Complete,
+}
+
+/// Controls what happens when a **new animation request** arrives while one is already
+/// in-flight.
+///
+/// Insert this component on a camera entity to configure conflict resolution. If not
+/// present, defaults to [`LastWins`](AnimationConflictPolicy::LastWins).
+///
+/// This component is orthogonal to [`InputInterruptBehavior`] — `AnimationConflictPolicy`
+/// handles programmatic animation requests (e.g. [`ZoomToFit`](crate::ZoomToFit),
+/// [`PlayAnimation`](crate::PlayAnimation)) that conflict with an active animation, while
+/// `InputInterruptBehavior` handles physical user input interrupting an animation.
+///
+/// - [`LastWins`](AnimationConflictPolicy::LastWins) — cancel the current animation and start the
+///   new one. Fires appropriate `*Cancelled` events for the interrupted operation.
+/// - [`FirstWins`](AnimationConflictPolicy::FirstWins) — reject the incoming request. Fires
+///   [`AnimationRejected`](crate::AnimationRejected).
+#[derive(Component, Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub enum AnimationConflictPolicy {
+    #[default]
+    LastWins,
+    FirstWins,
 }
 
 /// Marks the entity that the camera is currently fitted to.

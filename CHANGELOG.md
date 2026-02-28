@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PlayAnimation` event for queued `CameraMove` sequences (`ToPosition`/`ToOrbit`)
 - `SetFitTarget` event for setting the visualization target without zooming
 - `ToggleFitVisualization` event for enabling/disabling debug visualization
-- `InputInterruptBehavior` component (`Cancel`/`Complete`) for controlling animation interruption
+- `InputInterruptBehavior` component (`Cancel`/`Complete`) for controlling user input interruption during animations
+- `AnimationConflictPolicy` component (`LastWins`/`FirstWins`) for controlling animation conflict resolution
+- `AnimationRejected` event fired when `AnimationConflictPolicy::FirstWins` blocks an incoming animation
+- `source` field on `PlayAnimation` for explicit animation source tracking
 - `AnimationSource` enum for distinguishing `PlayAnimation` vs `AnimateToFit` origins
 - `CurrentFitTarget` component persisted after fit for visualization continuity
 - Builder pattern on `ZoomToFit` and `AnimateToFit` (`.margin()`, `.duration()`, `.easing()`)
