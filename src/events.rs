@@ -14,6 +14,20 @@
 //! **Easing** — events that animate also accept an `easing` field
 //! ([`EaseFunction`]) that controls the interpolation curve. This only has an effect
 //! when `duration > Duration::ZERO`.
+//!
+//! # Emitted event data
+//! Reference of data carried by events - for comparison purposes.
+//!
+//! | Event                    | `camera_entity` | `target_entity` | `margin` | `duration` | `easing` | `source` | `camera_move` |
+//! |--------------------------|-----------------|-----------------|----------|------------|----------|----------|---------------|
+//! | [`ZoomBegin`]            | yes             | yes             | yes      | yes        | yes      | —        | —             |
+//! | [`ZoomEnd`]              | yes             | yes             | yes      | yes        | yes      | —        | —             |
+//! | [`ZoomCancelled`]        | yes             | yes             | yes      | yes        | yes      | —        | —             |
+//! | [`AnimationBegin`]       | yes             | —               | —        | —          | —        | yes      | —             |
+//! | [`AnimationEnd`]         | yes             | —               | —        | —          | —        | yes      | —             |
+//! | [`AnimationCancelled`]   | yes             | —               | —        | —          | —        | yes      | yes           |
+//! | [`CameraMoveBegin`]      | yes             | —               | —        | —          | —        | —        | yes           |
+//! | [`CameraMoveEnd`]        | yes             | —               | —        | —          | —        | —        | yes           |
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -38,8 +52,8 @@ pub enum AnimationSource {
 
 /// `ZoomToFit` — frames a target entity in the camera view without changing the camera angle.
 ///
-/// - `camera_entity` — the entity with a [`PanOrbitCamera`] component.
-/// - `target` — the entity to frame; must have an [`Aabb`] (added automatically to meshes).
+/// - `camera_entity` — the entity with a `PanOrbitCamera` component.
+/// - `target` — the entity to frame; must have an `Aabb` (added automatically to meshes).
 /// - `margin` — total fraction of the screen to leave as space between the target's screen-space
 ///   bounding box and the screen edge, split equally across both sides of the constraining
 ///   dimension (e.g. `0.25` → ~12.5% each side).
@@ -150,7 +164,7 @@ pub struct ZoomCancelled {
 
 /// `PlayAnimation` — plays a queued sequence of [`CameraMove`] steps.
 ///
-/// - `camera_entity` — the entity with a [`PanOrbitCamera`] component.
+/// - `camera_entity` — the entity with a `PanOrbitCamera` component.
 /// - `camera_moves` — a [`VecDeque`] of [`CameraMove`] steps to play in order. Each [`CameraMove`]
 ///   is either a `ToPosition` (world-space translation + focus) or a `ToOrbit` (orbital parameters
 ///   around a focus point), each with its own duration and easing.
@@ -175,7 +189,7 @@ impl PlayAnimation {
     }
 }
 
-/// `AnimationBegin` — emitted when a [`CameraMoveList`] begins processing.
+/// `AnimationBegin` — emitted when a `CameraMoveList` begins processing.
 ///
 /// - `camera_entity` — the camera being animated.
 /// - `source` — whether this animation originated from [`PlayAnimation`] or [`AnimateToFit`].
@@ -187,7 +201,7 @@ pub struct AnimationBegin {
     pub source:        AnimationSource,
 }
 
-/// `AnimationEnd` — emitted when a [`CameraMoveList`] finishes all its queued moves.
+/// `AnimationEnd` — emitted when a `CameraMoveList` finishes all its queued moves.
 ///
 /// - `camera_entity` — the camera that finished animating.
 /// - `source` — whether this animation originated from [`PlayAnimation`] or [`AnimateToFit`].
@@ -242,10 +256,10 @@ pub struct CameraMoveEnd {
 /// `AnimateToFit` — animates the camera to a specific orientation while framing a target
 /// entity in view.
 ///
-/// - `camera_entity` — the entity with a [`PanOrbitCamera`] component.
-/// - `target` — the entity to frame; must have an [`Aabb`] (added automatically to meshes).
-/// - `yaw` — final yaw in radians; updates [`PanOrbitCamera::target_yaw`].
-/// - `pitch` — final pitch in radians; updates [`PanOrbitCamera::target_pitch`].
+/// - `camera_entity` — the entity with a `PanOrbitCamera` component.
+/// - `target` — the entity to frame; must have an `Aabb` (added automatically to meshes).
+/// - `yaw` — final yaw in radians; updates `PanOrbitCamera::target_yaw`.
+/// - `pitch` — final pitch in radians; updates `PanOrbitCamera::target_pitch`.
 /// - `margin` — see [`ZoomToFit`] for details on how margin is applied.
 /// - `duration` — see module-level docs on **Duration**.
 /// - `easing` — see module-level docs on **Easing**.
@@ -310,8 +324,8 @@ impl AnimateToFit {
 /// `SetFitTarget` — sets the visualization target without triggering a zoom. Allows you
 /// to inspect bounds before triggering [`ZoomToFit`].
 ///
-/// - `camera_entity` — the entity with a [`PanOrbitCamera`] component.
-/// - `target` — the entity whose bounds to visualize; must have an [`Aabb`].
+/// - `camera_entity` — the entity with a `PanOrbitCamera` component.
+/// - `target` — the entity whose bounds to visualize; must have an `Aabb`.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct SetFitTarget {
