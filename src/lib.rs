@@ -49,6 +49,7 @@ pub use events::SetFitTarget;
 pub use events::ToggleFitVisualization;
 pub use events::ZoomBegin;
 pub use events::ZoomCancelled;
+pub use events::ZoomContext;
 pub use events::ZoomEnd;
 pub use events::ZoomToFit;
 use observers::on_animate_to_fit;

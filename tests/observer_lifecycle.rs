@@ -18,6 +18,8 @@ use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::SetFitTarget;
 use bevy_panorbit_camera_ext::ZoomBegin;
+use bevy_panorbit_camera_ext::ZoomCancelled;
+use bevy_panorbit_camera_ext::ZoomContext;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
 
@@ -29,6 +31,7 @@ enum LifecycleEvent {
     AnimationRejected,
     ZoomBegin,
     ZoomEnd,
+    ZoomCancelled,
 }
 
 #[derive(Resource, Default, Debug)]
@@ -58,6 +61,10 @@ fn record_zoom_end(_: On<ZoomEnd>, mut log: ResMut<EventLog>) {
     log.0.push(LifecycleEvent::ZoomEnd);
 }
 
+fn record_zoom_cancelled(_: On<ZoomCancelled>, mut log: ResMut<EventLog>) {
+    log.0.push(LifecycleEvent::ZoomCancelled);
+}
+
 fn add_lifecycle_log_observers(app: &mut App) {
     app.init_resource::<EventLog>();
     app.add_observer(record_animation_begin);
@@ -66,6 +73,7 @@ fn add_lifecycle_log_observers(app: &mut App) {
     app.add_observer(record_animation_rejected);
     app.add_observer(record_zoom_begin);
     app.add_observer(record_zoom_end);
+    app.add_observer(record_zoom_cancelled);
 }
 
 fn spawn_fit_camera_and_target(app: &mut App) -> (Entity, Entity) {
@@ -614,4 +622,270 @@ fn conflict_default_is_last_wins() {
             LifecycleEvent::AnimationBegin,
         ]
     );
+}
+
+fn make_zoom_context() -> ZoomContext {
+    ZoomContext {
+        target_entity: Entity::PLACEHOLDER,
+        margin:        0.1,
+        duration:      Duration::from_millis(500),
+        easing:        EaseFunction::Linear,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Zoom lifecycle: cancellation / rejection / interrupt scenarios
+// ---------------------------------------------------------------------------
+
+#[test]
+fn zoom_animated_first_wins_rejection_emits_only_animation_rejected() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let (camera_entity, target_entity) = spawn_fit_camera_and_target(&mut app);
+    app.world_mut()
+        .entity_mut(camera_entity)
+        .insert(AnimationConflictPolicy::FirstWins);
+
+    // Start a long animation so it's still in-flight
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(5000))]),
+    ));
+    app.update();
+
+    // Clear the log to isolate the zoom trigger's events
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    // Trigger ZoomToFit (animated) — should be rejected with no ZoomBegin leak
+    app.world_mut().trigger(
+        ZoomToFit::new(camera_entity, target_entity)
+            .duration(Duration::from_millis(500))
+            .easing(EaseFunction::Linear),
+    );
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(log.0, vec![LifecycleEvent::AnimationRejected]);
+}
+
+#[test]
+fn zoom_animated_last_wins_cancels_plain_animation() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app
+        .world_mut()
+        .spawn((PanOrbitCamera::default(), AnimationConflictPolicy::LastWins))
+        .id();
+
+    // Start a long plain animation (no zoom context)
+    app.world_mut().trigger(PlayAnimation::new(
+        camera_entity,
+        VecDeque::from([make_move(Duration::from_millis(5000))]),
+    ));
+    app.update();
+
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    // Trigger zoom animation — should cancel plain, then begin zoom
+    app.world_mut().trigger(
+        PlayAnimation::new(
+            camera_entity,
+            VecDeque::from([make_move(Duration::from_millis(500))]),
+        )
+        .zoom_context(make_zoom_context()),
+    );
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![
+            LifecycleEvent::AnimationCancelled,
+            LifecycleEvent::ZoomBegin,
+            LifecycleEvent::AnimationBegin,
+        ]
+    );
+}
+
+#[test]
+fn zoom_animated_last_wins_cancels_in_flight_zoom() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app
+        .world_mut()
+        .spawn((PanOrbitCamera::default(), AnimationConflictPolicy::LastWins))
+        .id();
+
+    // Start a long zoom animation
+    app.world_mut().trigger(
+        PlayAnimation::new(
+            camera_entity,
+            VecDeque::from([make_move(Duration::from_millis(5000))]),
+        )
+        .zoom_context(make_zoom_context()),
+    );
+    app.update();
+
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    // Trigger another zoom — should cancel in-flight zoom, then begin new zoom
+    app.world_mut().trigger(
+        PlayAnimation::new(
+            camera_entity,
+            VecDeque::from([make_move(Duration::from_millis(500))]),
+        )
+        .zoom_context(make_zoom_context()),
+    );
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![
+            LifecycleEvent::AnimationCancelled,
+            LifecycleEvent::ZoomCancelled,
+            LifecycleEvent::ZoomBegin,
+            LifecycleEvent::AnimationBegin,
+        ]
+    );
+}
+
+#[test]
+fn zoom_animated_cancel_interrupt_emits_cancelled_and_zoom_cancelled() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app
+        .world_mut()
+        .spawn((PanOrbitCamera::default(), InputInterruptBehavior::Cancel))
+        .id();
+
+    // Start a zoom animation
+    app.world_mut().trigger(
+        PlayAnimation::new(
+            camera_entity,
+            VecDeque::from([make_move(Duration::from_millis(5000))]),
+        )
+        .zoom_context(make_zoom_context()),
+    );
+    app.update();
+
+    // Simulate external user input by modifying camera targets
+    {
+        let mut camera = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_entity)
+            .expect("camera should exist");
+        camera.target_focus = Vec3::new(100.0, 200.0, 300.0);
+        camera.target_yaw = 1.25;
+        camera.target_pitch = -0.75;
+        camera.target_radius = 12.5;
+    }
+
+    app.update();
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![
+            LifecycleEvent::ZoomBegin,
+            LifecycleEvent::AnimationBegin,
+            LifecycleEvent::AnimationCancelled,
+            LifecycleEvent::ZoomCancelled,
+        ]
+    );
+    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+}
+
+#[test]
+fn zoom_animated_complete_interrupt_emits_end_and_zoom_end() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app
+        .world_mut()
+        .spawn((PanOrbitCamera::default(), InputInterruptBehavior::Complete))
+        .id();
+
+    // Start a zoom animation
+    app.world_mut().trigger(
+        PlayAnimation::new(
+            camera_entity,
+            VecDeque::from([make_move(Duration::from_millis(5000))]),
+        )
+        .zoom_context(make_zoom_context()),
+    );
+    app.update();
+
+    // Simulate external user input
+    {
+        let mut camera = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_entity)
+            .expect("camera should exist");
+        camera.target_focus = Vec3::new(-1.0, -1.0, -1.0);
+        camera.target_yaw = -1.0;
+        camera.target_pitch = -1.0;
+        camera.target_radius = 2.0;
+    }
+
+    app.update();
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![
+            LifecycleEvent::ZoomBegin,
+            LifecycleEvent::AnimationBegin,
+            LifecycleEvent::AnimationEnd,
+            LifecycleEvent::ZoomEnd,
+        ]
+    );
+    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+}
+
+#[test]
+fn zoom_animated_normal_completion_emits_full_lifecycle() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera_entity = app.world_mut().spawn(PanOrbitCamera::default()).id();
+
+    // Use a zero-duration CameraMove so the queue drains immediately
+    app.world_mut().trigger(
+        PlayAnimation::new(camera_entity, VecDeque::from([make_move(Duration::ZERO)]))
+            .zoom_context(make_zoom_context()),
+    );
+    app.update();
+    app.update();
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(
+        log.0,
+        vec![
+            LifecycleEvent::ZoomBegin,
+            LifecycleEvent::AnimationBegin,
+            LifecycleEvent::AnimationEnd,
+            LifecycleEvent::ZoomEnd,
+        ]
+    );
+    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
 }

@@ -15,6 +15,7 @@ use bevy_panorbit_camera::PanOrbitCamera;
 use labels::BoundsLabel;
 use labels::MarginLabel;
 pub use types::FitTargetGizmo;
+use types::FitTargetViewportMargins;
 pub use types::FitTargetVisualizationConfig;
 
 use crate::components::VisualizationActive;
@@ -71,7 +72,9 @@ fn on_toggle_fit_visualization(
 
     if active_query.get(entity).is_ok() {
         // Disable — remove marker, disable gizmo config, clean up labels
-        commands.entity(entity).remove::<VisualizationActive>();
+        commands
+            .entity(entity)
+            .remove::<(VisualizationActive, FitTargetViewportMargins)>();
         let (config, _) = config_store.config_mut::<FitTargetGizmo>();
         config.enabled = false;
 

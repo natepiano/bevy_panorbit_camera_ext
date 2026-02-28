@@ -24,6 +24,7 @@ use crate::events::PlayAnimation;
 use crate::events::SetFitTarget;
 use crate::events::ZoomBegin;
 use crate::events::ZoomCancelled;
+use crate::events::ZoomContext;
 use crate::events::ZoomEnd;
 use crate::events::ZoomToFit;
 use crate::fit::FitSolution;
@@ -100,22 +101,17 @@ fn prepare_fit_for_target(
 
 /// Observer for `ZoomToFit` event - frames a target entity in the camera view.
 /// When duration is `Duration::ZERO`, snaps instantly.
-/// When duration is greater than zero, animates smoothly.
+/// When duration is greater than zero, animates smoothly via [`PlayAnimation`]
+/// with a [`ZoomContext`] so that `on_play_animation` handles all conflict
+/// resolution and zoom lifecycle events in one place.
 /// Requires target entity to have a `Mesh3d` (direct or on descendants).
-#[allow(clippy::too_many_arguments)]
 pub fn on_zoom_to_fit(
     zoom: On<ZoomToFit>,
     mut commands: Commands,
-    mut camera_query: Query<(
-        &mut PanOrbitCamera,
-        &Projection,
-        &Camera,
-        Option<&AnimationConflictPolicy>,
-    )>,
+    mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera)>,
     mesh_query: Query<&Mesh3d>,
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
-    move_list_query: Query<&CameraMoveList>,
     meshes: Res<Assets<Mesh>>,
 ) {
     let camera_entity = zoom.camera_entity;
@@ -124,25 +120,9 @@ pub fn on_zoom_to_fit(
     let duration = zoom.duration;
     let easing = zoom.easing;
 
-    let Ok((mut camera, projection, cam, conflict_policy)) = camera_query.get_mut(camera_entity)
-    else {
+    let Ok((mut camera, projection, cam)) = camera_query.get_mut(camera_entity) else {
         return;
     };
-
-    // Reject early when `FirstWins` is active and an animation is in-flight.
-    // This prevents `ZoomBegin` and `ZoomAnimationMarker` from leaking when the
-    // underlying `PlayAnimation` would be rejected.
-    if duration > Duration::ZERO {
-        let policy = conflict_policy.copied().unwrap_or_default();
-        let has_in_flight = move_list_query.get(camera_entity).is_ok();
-        if has_in_flight && policy == AnimationConflictPolicy::FirstWins {
-            commands.trigger(AnimationRejected {
-                camera_entity,
-                source: AnimationSource::ZoomToFit,
-            });
-            return;
-        }
-    }
 
     debug!(
         "ZoomToFit: yaw={:.3} pitch={:.3} current_focus={:.1?} current_radius={:.1} duration_ms={:.0}",
@@ -169,14 +149,6 @@ pub fn on_zoom_to_fit(
         return;
     };
 
-    commands.trigger(ZoomBegin {
-        camera_entity,
-        target_entity,
-        margin,
-        duration,
-        easing,
-    });
-
     if duration > Duration::ZERO {
         // Animated path: use `ToOrbit` to pass orbital params directly, avoiding
         // gimbal lock from atan2 decomposition at extreme pitch angles.
@@ -189,22 +161,25 @@ pub fn on_zoom_to_fit(
             easing,
         }]);
 
-        // Trigger `PlayAnimation` BEFORE inserting `ZoomAnimationMarker` so that
-        // `on_play_animation` sees the old world state during conflict resolution.
-        // If inserted first, LastWins would cancel the NEW zoom's own marker.
-        commands.trigger(
-            PlayAnimation::new(camera_entity, camera_moves).source(AnimationSource::ZoomToFit),
-        );
+        let ctx = ZoomContext {
+            target_entity,
+            margin,
+            duration,
+            easing,
+        };
 
-        // Mark this as a zoom operation so `AnimationEnd` fires `ZoomEnd`
-        commands.entity(camera_entity).insert(ZoomAnimationMarker {
+        // `on_play_animation` handles conflict resolution, `ZoomBegin`, and
+        // `ZoomAnimationMarker` insertion — all in one place after acceptance.
+        commands.trigger(PlayAnimation::new(camera_entity, camera_moves).zoom_context(ctx));
+    } else {
+        // Instant path: snap directly to target — no `PlayAnimation` involved.
+        commands.trigger(ZoomBegin {
+            camera_entity,
             target_entity,
             margin,
             duration,
             easing,
         });
-    } else {
-        // Instant path: snap directly to target
         camera.focus = fit.focus;
         camera.radius = Some(fit.radius);
         camera.target_focus = fit.focus;
@@ -223,7 +198,31 @@ pub fn on_zoom_to_fit(
     commands.trigger(SetFitTarget::new(camera_entity, target_entity));
 }
 
-/// Observer for `PlayAnimation` event - initiates camera animation sequence
+/// Fires `ZoomBegin` and inserts `ZoomAnimationMarker` when the accepted
+/// animation carries zoom context.
+fn begin_zoom_if_needed(
+    commands: &mut Commands,
+    entity: Entity,
+    zoom_context: &Option<ZoomContext>,
+) {
+    if let Some(ctx) = zoom_context {
+        commands.trigger(ZoomBegin {
+            camera_entity: entity,
+            target_entity: ctx.target_entity,
+            margin:        ctx.margin,
+            duration:      ctx.duration,
+            easing:        ctx.easing,
+        });
+        commands
+            .entity(entity)
+            .insert(ZoomAnimationMarker(ctx.clone()));
+    }
+}
+
+/// Observer for `PlayAnimation` event - initiates camera animation sequence.
+/// This is the single decision point for all trigger-time logic: conflict
+/// resolution, zoom lifecycle (`ZoomBegin` / `ZoomAnimationMarker`), and
+/// animation begin.
 pub fn on_play_animation(
     start: On<PlayAnimation>,
     mut commands: Commands,
@@ -237,7 +236,12 @@ pub fn on_play_animation(
     source_marker_query: Query<&AnimationSourceMarker>,
 ) {
     let entity = start.camera_entity;
-    let source = start.source;
+    let zoom_context = start.zoom_context.clone();
+    let source = if zoom_context.is_some() {
+        AnimationSource::ZoomToFit
+    } else {
+        start.source
+    };
 
     let Ok((mut camera, existing_stash, conflict_policy)) = camera_query.get_mut(entity) else {
         return;
@@ -285,15 +289,19 @@ pub fn on_play_animation(
                     commands.entity(entity).remove::<ZoomAnimationMarker>();
                     commands.trigger(ZoomCancelled {
                         camera_entity: entity,
-                        target_entity: marker.target_entity,
-                        margin:        marker.margin,
-                        duration:      marker.duration,
-                        easing:        marker.easing,
+                        target_entity: marker.0.target_entity,
+                        margin:        marker.0.margin,
+                        duration:      marker.0.duration,
+                        easing:        marker.0.easing,
                     });
                 }
             },
         }
     }
+
+    // Zoom lifecycle fires here — after conflict resolution has passed.
+    // No command-ordering hazard since everything happens in the same observer.
+    begin_zoom_if_needed(&mut commands, entity, &zoom_context);
 
     commands.trigger(AnimationBegin {
         camera_entity: entity,

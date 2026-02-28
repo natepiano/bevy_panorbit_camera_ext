@@ -235,10 +235,10 @@ fn handle_empty_queue(
         commands.entity(entity).remove::<ZoomAnimationMarker>();
         commands.trigger(ZoomEnd {
             camera_entity: entity,
-            target_entity: marker.target_entity,
-            margin:        marker.margin,
-            duration:      marker.duration,
-            easing:        marker.easing,
+            target_entity: marker.0.target_entity,
+            margin:        marker.0.margin,
+            duration:      marker.0.duration,
+            easing:        marker.0.easing,
         });
     }
 }
@@ -270,10 +270,10 @@ fn handle_interrupt(
                 commands.entity(entity).remove::<ZoomAnimationMarker>();
                 commands.trigger(ZoomCancelled {
                     camera_entity: entity,
-                    target_entity: marker.target_entity,
-                    margin:        marker.margin,
-                    duration:      marker.duration,
-                    easing:        marker.easing,
+                    target_entity: marker.0.target_entity,
+                    margin:        marker.0.margin,
+                    duration:      marker.0.duration,
+                    easing:        marker.0.easing,
                 });
             }
         },
@@ -299,10 +299,10 @@ fn handle_interrupt(
                 commands.entity(entity).remove::<ZoomAnimationMarker>();
                 commands.trigger(ZoomEnd {
                     camera_entity: entity,
-                    target_entity: marker.target_entity,
-                    margin:        marker.margin,
-                    duration:      marker.duration,
-                    easing:        marker.easing,
+                    target_entity: marker.0.target_entity,
+                    margin:        marker.0.margin,
+                    duration:      marker.0.duration,
+                    easing:        marker.0.easing,
                 });
             }
         },

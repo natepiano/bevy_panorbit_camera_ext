@@ -1,11 +1,9 @@
 //! Components used by the camera extension system.
 
-use std::time::Duration;
-
-use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 
 use crate::events::AnimationSource;
+use crate::events::ZoomContext;
 
 /// Controls what happens when **user input** (orbit, pan, zoom) occurs during an
 /// in-flight animation.
@@ -62,14 +60,9 @@ pub struct CurrentFitTarget(pub Entity);
 
 /// Marker component that tracks a zoom-to-fit operation routed through the animation system.
 /// When `AnimationEnd` fires on an entity with this marker, `ZoomEnd` is triggered and the
-/// marker is removed.
-#[derive(Component)]
-pub struct ZoomAnimationMarker {
-    pub target_entity: Entity,
-    pub margin:        f32,
-    pub duration:      Duration,
-    pub easing:        EaseFunction,
-}
+/// marker is removed. Wraps the [`ZoomContext`] that originated the zoom.
+#[derive(Component, Clone)]
+pub struct ZoomAnimationMarker(pub ZoomContext);
 
 /// Marker component that tracks whether an animation was triggered by
 /// [`PlayAnimation`](crate::PlayAnimation) or [`AnimateToFit`](crate::AnimateToFit).

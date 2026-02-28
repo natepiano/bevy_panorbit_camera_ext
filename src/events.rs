@@ -130,6 +130,18 @@ use bevy::prelude::*;
 
 use crate::animation::CameraMove;
 
+/// Context for a zoom-to-fit operation, passed through [`PlayAnimation`] so
+/// that `on_play_animation` can fire [`ZoomBegin`] and insert
+/// [`ZoomAnimationMarker`](crate::components::ZoomAnimationMarker) at the
+/// single point where conflict resolution has already completed.
+#[derive(Clone, Reflect)]
+pub struct ZoomContext {
+    pub target_entity: Entity,
+    pub margin:        f32,
+    pub duration:      Duration,
+    pub easing:        EaseFunction,
+}
+
 /// Identifies which event triggered an animation lifecycle.
 ///
 /// Carried by [`AnimationBegin`], [`AnimationEnd`], [`AnimationCancelled`], and
@@ -274,9 +286,12 @@ pub struct ZoomCancelled {
 ///   focus) or a `ToOrbit` (orbital parameters around a focus point), each with its own duration
 ///   and easing.
 /// - `source` — the [`AnimationSource`] identifying the origin of this animation. Defaults to
-///   [`AnimationSource::PlayAnimation`]; set to [`AnimationSource::ZoomToFit`] or
-///   [`AnimationSource::AnimateToFit`] via the `.source()` builder when the animation originates
-///   from [`ZoomToFit`] or [`AnimateToFit`].
+///   [`AnimationSource::PlayAnimation`]; set to [`AnimationSource::AnimateToFit`] via the
+///   `.source()` builder when the animation originates from [`AnimateToFit`].
+/// - `zoom_context` — when `Some`, the animation originated from [`ZoomToFit`]. The
+///   `on_play_animation` observer uses this to fire [`ZoomBegin`] and insert
+///   [`ZoomAnimationMarker`](crate::components::ZoomAnimationMarker) after conflict resolution
+///   passes. Source is implicitly [`AnimationSource::ZoomToFit`] when set.
 ///
 /// ```rust,ignore
 /// commands.trigger(PlayAnimation::new(camera, [move1, move2, move3]));
@@ -292,6 +307,7 @@ pub struct PlayAnimation {
     pub camera_entity: Entity,
     pub camera_moves:  VecDeque<CameraMove>,
     pub source:        AnimationSource,
+    pub zoom_context:  Option<ZoomContext>,
 }
 
 impl PlayAnimation {
@@ -300,11 +316,18 @@ impl PlayAnimation {
             camera_entity,
             camera_moves: camera_moves.into_iter().collect(),
             source: AnimationSource::PlayAnimation,
+            zoom_context: None,
         }
     }
 
     pub fn source(mut self, source: AnimationSource) -> Self {
         self.source = source;
+        self
+    }
+
+    pub fn zoom_context(mut self, ctx: ZoomContext) -> Self {
+        self.zoom_context = Some(ctx);
+        self.source = AnimationSource::ZoomToFit;
         self
     }
 }
