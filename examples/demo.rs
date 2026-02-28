@@ -6,7 +6,6 @@
 //! - Selected meshes show a gizmo outline
 //! - Press 'D' to toggle debug visualization of zoom-to-fit bounds
 
-use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::time::Duration;
 
@@ -33,19 +32,17 @@ use bevy_panorbit_camera_ext::AnimationSource;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
-use bevy_panorbit_camera_ext::FitVisualizationBegin;
-use bevy_panorbit_camera_ext::FitVisualizationEnd;
+use bevy_panorbit_camera_ext::FitVisualization;
 use bevy_panorbit_camera_ext::InputInterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
-use bevy_panorbit_camera_ext::ToggleFitVisualization;
 use bevy_panorbit_camera_ext::ZoomBegin;
 use bevy_panorbit_camera_ext::ZoomCancelled;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
 
-const ZOOM_DURATION_MS: f32 = 1000.0;
-const ZOOM_MARGIN_MESH: f32 = 0.25;
+const ZOOM_DURATION_MS: u64 = 1000;
+const ZOOM_MARGIN_MESH: f32 = 0.15;
 const ZOOM_MARGIN_SCENE: f32 = 0.08;
 const GIZMO_SCALE: f32 = 1.03;
 const DRAG_SENSITIVITY: f32 = 0.02;
@@ -53,113 +50,16 @@ const MESH_CENTER_Y: f32 = 1.0;
 const EVENT_LOG_FONT_SIZE: f32 = 14.0;
 const EVENT_LOG_SCROLL_SPEED: f32 = 120.0;
 const EVENT_LOG_WIDTH: f32 = 300.0;
-const ANIMATE_FIT_DURATION_MS: f32 = 1200.0;
+const ANIMATE_FIT_DURATION_MS: u64 = 1200;
 const CAMERA_START_YAW: f32 = -0.2;
 const CAMERA_START_PITCH: f32 = 0.4;
-const ORBIT_MOVE_DURATION_MS: f32 = 800.0;
+const ORBIT_MOVE_DURATION_MS: u64 = 800;
 const CASCADE_MAX_DISTANCE_PERSPECTIVE: f32 = 20.0;
 const CASCADE_MAX_DISTANCE_ORTHOGRAPHIC: f32 = 40.0;
-
-fn cascade_shadow_config_perspective() -> CascadeShadowConfig {
-    CascadeShadowConfigBuilder {
-        maximum_distance: CASCADE_MAX_DISTANCE_PERSPECTIVE,
-        first_cascade_far_bound: 5.0,
-        ..default()
-    }
-    .build()
-}
-
-fn cascade_shadow_config_orthographic() -> CascadeShadowConfig {
-    CascadeShadowConfigBuilder {
-        num_cascades: 4,
-        maximum_distance: CASCADE_MAX_DISTANCE_ORTHOGRAPHIC,
-        first_cascade_far_bound: 4.0,
-        ..default()
-    }
-    .build()
-}
-
-#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
-enum AppState {
-    #[default]
-    Loading,
-    Running,
-}
-
-fn main() {
-    App::new()
-        .add_plugins((
-            DefaultPlugins,
-            PanOrbitCameraPlugin,
-            PanOrbitCameraExtPlugin,
-            MeshPickingPlugin,
-            BrpExtrasPlugin::default(),
-        ))
-        .insert_resource(DirectionalLightShadowMap { size: 4096 })
-        .init_state::<AppState>()
-        .init_resource::<ActiveEasing>()
-        .init_resource::<DebugVisualizationActive>()
-        .init_resource::<EventLog>()
-        .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            initial_fit_to_scene.run_if(in_state(AppState::Loading)),
-        )
-        .add_systems(
-            Update,
-            (
-                toggle_pause,
-                draw_selection_gizmo,
-                update_event_log_text,
-                scroll_event_log,
-                (
-                    toggle_debug_visualization,
-                    toggle_projection,
-                    randomize_easing,
-                    animate_camera,
-                    animate_fit_to_scene,
-                    toggle_interrupt_behavior,
-                    toggle_animation_conflict_policy,
-                )
-                    .run_if(not_paused),
-            ),
-        )
-        .add_observer(log_animation_start)
-        .add_observer(log_animation_begin)
-        .add_observer(log_animation_cancelled)
-        .add_observer(log_camera_move_start)
-        .add_observer(log_camera_move_end)
-        .add_observer(log_zoom_begin)
-        .add_observer(log_zoom_end)
-        .add_observer(log_zoom_cancelled)
-        .add_observer(log_fit_visualization_begin)
-        .add_observer(log_fit_visualization_end)
-        .add_observer(log_animation_rejected)
-        .run();
-}
-
-#[derive(Component)]
-struct Selected;
-
-#[derive(Component)]
-struct EventLogNode;
-
-#[derive(Component)]
-struct InputInterruptBehaviorLabel;
-
-#[derive(Component)]
-struct AnimationConflictPolicyLabel;
-
-#[derive(Component)]
-struct PausedOverlay;
-
-#[derive(Resource)]
-struct ActiveEasing(EaseFunction);
-
-impl Default for ActiveEasing {
-    fn default() -> Self { Self(EaseFunction::CubicOut) }
-}
-
+const UI_FONT_SIZE: f32 = 13.0;
+const EVENT_LOG_COLOR: Color = Color::srgba(0.0, 1.0, 0.0, 0.9);
+const EVENT_LOG_COLOR_RED: Color = Color::srgba(1.0, 0.3, 0.3, 0.9);
+const EVENT_LOG_SEPARATOR: &str = "- - - - - - - - - - - -";
 const ALL_EASINGS: &[EaseFunction] = &[
     EaseFunction::Linear,
     EaseFunction::QuadraticIn,
@@ -200,21 +100,19 @@ const ALL_EASINGS: &[EaseFunction] = &[
     EaseFunction::BounceInOut,
 ];
 
-#[derive(Resource, Default)]
-struct DebugVisualizationActive(bool);
+// ============================================================================
+// Types
+// ============================================================================
 
-struct PendingLogEntry {
-    text:  String,
-    color: Color,
+#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
+enum AppState {
+    #[default]
+    Loading,
+    Running,
 }
 
-const EVENT_LOG_COLOR: Color = Color::srgba(0.0, 1.0, 0.0, 0.9);
-const EVENT_LOG_COLOR_RED: Color = Color::srgba(1.0, 0.3, 0.3, 0.9);
-
-#[derive(Resource, Default)]
-struct EventLog {
-    pending: Vec<PendingLogEntry>,
-}
+#[derive(Component)]
+struct Selected;
 
 #[derive(Component)]
 enum MeshShape {
@@ -231,6 +129,124 @@ struct SceneEntities {
     camera:       Entity,
     scene_bounds: Entity,
     light:        Entity,
+}
+
+#[derive(Resource)]
+struct ActiveEasing(EaseFunction);
+
+impl Default for ActiveEasing {
+    fn default() -> Self { Self(EaseFunction::CubicOut) }
+}
+
+#[derive(Component)]
+struct EventLogNode;
+
+#[derive(Component)]
+struct InputInterruptBehaviorLabel;
+
+#[derive(Component)]
+struct AnimationConflictPolicyLabel;
+
+#[derive(Component)]
+struct PausedOverlay;
+
+#[derive(Component)]
+struct EventLogHint;
+
+#[derive(Component)]
+struct EventLogToggleHint;
+
+/// Marker resource: when present, the next `AnimationEnd` enables the event log.
+#[derive(Resource)]
+struct EnableLogOnAnimationEnd;
+
+struct PendingLogEntry {
+    text:  String,
+    color: Color,
+}
+
+#[derive(Resource, Default)]
+struct EventLog {
+    enabled: bool,
+    pending: Vec<PendingLogEntry>,
+}
+
+// ============================================================================
+// App entry point
+// ============================================================================
+
+fn main() {
+    App::new()
+        .add_plugins((
+            DefaultPlugins,
+            PanOrbitCameraPlugin,
+            PanOrbitCameraExtPlugin,
+            MeshPickingPlugin,
+            BrpExtrasPlugin::default(),
+        ))
+        .insert_resource(DirectionalLightShadowMap { size: 4096 })
+        .init_state::<AppState>()
+        .init_resource::<ActiveEasing>()
+        .init_resource::<EventLog>()
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            initial_fit_to_scene.run_if(in_state(AppState::Loading)),
+        )
+        .add_systems(
+            Update,
+            (
+                toggle_pause,
+                toggle_event_log,
+                draw_selection_gizmo,
+                update_event_log_text,
+                scroll_event_log,
+                (
+                    toggle_debug_visualization,
+                    toggle_projection,
+                    randomize_easing,
+                    animate_camera,
+                    animate_fit_to_scene,
+                    toggle_interrupt_behavior,
+                    toggle_animation_conflict_policy,
+                )
+                    .run_if(not_paused),
+            ),
+        )
+        .add_observer(enable_log_on_initial_fit)
+        .add_observer(log_animation_begin)
+        .add_observer(log_animation_end)
+        .add_observer(log_animation_cancelled)
+        .add_observer(log_camera_move_start)
+        .add_observer(log_camera_move_end)
+        .add_observer(log_zoom_begin)
+        .add_observer(log_zoom_end)
+        .add_observer(log_zoom_cancelled)
+        .add_observer(log_animation_rejected)
+        .run();
+}
+
+// ============================================================================
+// Scene setup
+// ============================================================================
+
+fn cascade_shadow_config_perspective() -> CascadeShadowConfig {
+    CascadeShadowConfigBuilder {
+        maximum_distance: CASCADE_MAX_DISTANCE_PERSPECTIVE,
+        first_cascade_far_bound: 5.0,
+        ..default()
+    }
+    .build()
+}
+
+fn cascade_shadow_config_orthographic() -> CascadeShadowConfig {
+    CascadeShadowConfigBuilder {
+        num_cascades: 4,
+        maximum_distance: CASCADE_MAX_DISTANCE_ORTHOGRAPHIC,
+        first_cascade_far_bound: 4.0,
+        ..default()
+    }
+    .build()
 }
 
 fn setup(
@@ -348,7 +364,7 @@ fn setup(
     commands.spawn((
         Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'F' animate fit to scene\n'A' animate camera\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy"),
         TextFont {
-            font_size: 13.0,
+            font_size: UI_FONT_SIZE,
             ..default()
         },
         Node {
@@ -363,7 +379,7 @@ fn setup(
     commands.spawn((
         Text::new(interrupt_behavior_hint_text(InputInterruptBehavior::Cancel)),
         TextFont {
-            font_size: 13.0,
+            font_size: UI_FONT_SIZE,
             ..default()
         },
         TextColor(Color::srgba(0.7, 0.7, 0.7, 0.7)),
@@ -380,7 +396,7 @@ fn setup(
     commands.spawn((
         Text::new(conflict_policy_hint_text(AnimationConflictPolicy::LastWins)),
         TextFont {
-            font_size: 13.0,
+            font_size: UI_FONT_SIZE,
             ..default()
         },
         TextColor(Color::srgba(0.7, 0.7, 0.7, 0.7)),
@@ -393,36 +409,61 @@ fn setup(
         AnimationConflictPolicyLabel,
     ));
 
-    // Event log scroll container (right edge, scrollable)
+    // Event log scroll container (right edge, scrollable, hidden until enabled)
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(12.0),
             right: Val::Px(12.0),
             width: Val::Px(EVENT_LOG_WIDTH),
-            bottom: Val::Px(32.0),
+            bottom: Val::Px(72.0),
             flex_direction: FlexDirection::Column,
             overflow: Overflow::scroll_y(),
             ..default()
         },
+        Visibility::Hidden,
         Pickable::IGNORE,
         EventLogNode,
     ));
 
-    // Scroll hint (bottom-right, aligned with InputInterruptBehavior hint)
+    // Log toggle hint (bottom-right, always visible once initial animation completes)
     commands.spawn((
-        Text::new("Up/Down scroll log | 'C' clear log"),
+        Text::new("'L' toggle log off and on"),
         TextFont {
-            font_size: 13.0,
+            font_size: UI_FONT_SIZE,
             ..default()
         },
         TextColor(Color::srgba(0.7, 0.7, 0.7, 0.7)),
+        TextLayout::new_with_justify(Justify::Left),
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(12.0),
             right: Val::Px(12.0),
+            width: Val::Px(EVENT_LOG_WIDTH),
             ..default()
         },
+        Visibility::Hidden,
+        EventLogToggleHint,
+    ));
+
+    // Log scroll/clear hints (bottom-right, hidden until log enabled)
+    commands.spawn((
+        Text::new("Up/Down scroll log\n'C' clear log"),
+        TextFont {
+            font_size: UI_FONT_SIZE,
+            ..default()
+        },
+        TextColor(Color::srgba(0.7, 0.7, 0.7, 0.7)),
+        TextLayout::new_with_justify(Justify::Left),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(28.0),
+            right: Val::Px(12.0),
+            width: Val::Px(EVENT_LOG_WIDTH),
+            ..default()
+        },
+        Visibility::Hidden,
+        EventLogHint,
     ));
 
     // Paused overlay (centered, hidden until Esc)
@@ -464,6 +505,7 @@ fn initial_fit_to_scene(
     if meshes.get(&mesh3d.0).is_none() {
         return;
     }
+    commands.insert_resource(EnableLogOnAnimationEnd);
     commands.trigger(
         AnimateToFit::new(scene.camera, scene.scene_bounds)
             .yaw(CAMERA_START_YAW)
@@ -473,6 +515,10 @@ fn initial_fit_to_scene(
     );
     next_state.set(AppState::Running);
 }
+
+// ============================================================================
+// Pause
+// ============================================================================
 
 fn not_paused(time: Res<Time<Virtual>>) -> bool { !time.is_paused() }
 
@@ -497,6 +543,10 @@ fn toggle_pause(
     }
 }
 
+// ============================================================================
+// Pointer interaction
+// ============================================================================
+
 fn on_mesh_clicked(
     click: On<Pointer<Click>>,
     mut commands: Commands,
@@ -517,7 +567,7 @@ fn on_mesh_clicked(
     commands.trigger(
         ZoomToFit::new(scene.camera, clicked)
             .margin(ZOOM_MARGIN_MESH)
-            .duration(Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0))
+            .duration(Duration::from_millis(ZOOM_DURATION_MS))
             .easing(active_easing.0),
     );
 }
@@ -540,7 +590,7 @@ fn on_ground_clicked(
     commands.trigger(
         ZoomToFit::new(scene.camera, scene.scene_bounds)
             .margin(ZOOM_MARGIN_SCENE)
-            .duration(Duration::from_secs_f32(ZOOM_DURATION_MS / 1000.0))
+            .duration(Duration::from_millis(ZOOM_DURATION_MS))
             .easing(active_easing.0),
     );
 }
@@ -565,7 +615,7 @@ fn on_below_clicked(
             .yaw(CAMERA_START_YAW)
             .pitch(CAMERA_START_PITCH)
             .margin(ZOOM_MARGIN_SCENE)
-            .duration(Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0))
+            .duration(Duration::from_millis(ANIMATE_FIT_DURATION_MS))
             .easing(active_easing.0),
     );
 }
@@ -584,25 +634,18 @@ fn on_mesh_dragged(
     }
 }
 
-fn toggle_debug_visualization(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut commands: Commands,
-    mut active: ResMut<DebugVisualizationActive>,
-    scene: Res<SceneEntities>,
-) {
-    if keyboard.just_pressed(KeyCode::KeyD) {
-        active.0 = !active.0;
-        commands.trigger(ToggleFitVisualization::new(scene.camera));
-    }
-}
+// ============================================================================
+// Selection gizmo
+// ============================================================================
 
 fn draw_selection_gizmo(
     mut gizmos: Gizmos,
-    debug_active: Res<DebugVisualizationActive>,
+    scene: Res<SceneEntities>,
+    viz_query: Query<(), With<FitVisualization>>,
     query: Query<(&Transform, &MeshShape), With<Selected>>,
 ) {
     // Hide selection gizmo when debug visualization is active
-    if debug_active.0 {
+    if viz_query.get(scene.camera).is_ok() {
         return;
     }
 
@@ -638,6 +681,25 @@ fn draw_selection_gizmo(
     }
 }
 
+// ============================================================================
+// Keyboard actions
+// ============================================================================
+
+fn toggle_debug_visualization(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    scene: Res<SceneEntities>,
+    viz_query: Query<(), With<FitVisualization>>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyD) {
+        if viz_query.get(scene.camera).is_ok() {
+            commands.entity(scene.camera).remove::<FitVisualization>();
+        } else {
+            commands.entity(scene.camera).insert(FitVisualization);
+        }
+    }
+}
+
 fn animate_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
@@ -661,13 +723,13 @@ fn animate_camera(
     let half_pi = PI / 2.0;
 
     // 4 camera moves that orbit PI/2 at a time from the current position
-    let camera_moves = VecDeque::from([
+    let camera_moves = [
         CameraMove::ToOrbit {
             focus,
             yaw: yaw + half_pi,
             pitch,
             radius,
-            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
+            duration: Duration::from_millis(ORBIT_MOVE_DURATION_MS),
             easing: e,
         },
         CameraMove::ToOrbit {
@@ -675,7 +737,7 @@ fn animate_camera(
             yaw: yaw + half_pi * 2.0,
             pitch,
             radius,
-            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
+            duration: Duration::from_millis(ORBIT_MOVE_DURATION_MS),
             easing: e,
         },
         CameraMove::ToOrbit {
@@ -683,7 +745,7 @@ fn animate_camera(
             yaw: yaw + half_pi * 3.0,
             pitch,
             radius,
-            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
+            duration: Duration::from_millis(ORBIT_MOVE_DURATION_MS),
             easing: e,
         },
         CameraMove::ToOrbit {
@@ -691,10 +753,10 @@ fn animate_camera(
             yaw: yaw + half_pi * 4.0,
             pitch,
             radius,
-            duration: Duration::from_secs_f32(ORBIT_MOVE_DURATION_MS / 1000.0),
+            duration: Duration::from_millis(ORBIT_MOVE_DURATION_MS),
             easing: e,
         },
-    ]);
+    ];
 
     commands.trigger(PlayAnimation::new(scene.camera, camera_moves));
 }
@@ -731,7 +793,7 @@ fn animate_fit_to_scene(
             .yaw(CAMERA_START_YAW)
             .pitch(CAMERA_START_PITCH)
             .margin(ZOOM_MARGIN_SCENE)
-            .duration(Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0))
+            .duration(Duration::from_millis(ANIMATE_FIT_DURATION_MS))
             .easing(easing.0),
     );
 }
@@ -759,7 +821,7 @@ fn toggle_projection(
                 .yaw(CAMERA_START_YAW)
                 .pitch(CAMERA_START_PITCH)
                 .margin(ZOOM_MARGIN_SCENE)
-                .duration(Duration::from_secs_f32(ANIMATE_FIT_DURATION_MS / 1000.0))
+                .duration(Duration::from_millis(ANIMATE_FIT_DURATION_MS))
                 .easing(active_easing.0),
         );
         return;
@@ -797,6 +859,10 @@ fn toggle_projection(
     camera.force_update = true;
     *pending_fit = true;
 }
+
+// ============================================================================
+// Behavior configuration
+// ============================================================================
 
 fn interrupt_behavior_hint_text(behavior: InputInterruptBehavior) -> String {
     match behavior {
@@ -898,10 +964,102 @@ fn toggle_animation_conflict_policy(
 // Event log
 // ============================================================================
 
-const EVENT_LOG_SEPARATOR: &str = "- - - - - - - - - - - -";
+/// Enables the event log when the initial `AnimateToFit` animation completes.
+#[allow(clippy::type_complexity)]
+fn enable_log_on_initial_fit(
+    _trigger: On<AnimationEnd>,
+    mut commands: Commands,
+    marker: Option<Res<EnableLogOnAnimationEnd>>,
+    mut log: ResMut<EventLog>,
+    mut container_query: Query<
+        &mut Visibility,
+        (
+            With<EventLogNode>,
+            Without<EventLogHint>,
+            Without<EventLogToggleHint>,
+        ),
+    >,
+    mut hint_query: Query<
+        &mut Visibility,
+        (
+            With<EventLogHint>,
+            Without<EventLogNode>,
+            Without<EventLogToggleHint>,
+        ),
+    >,
+    mut toggle_hint_query: Query<
+        &mut Visibility,
+        (
+            With<EventLogToggleHint>,
+            Without<EventLogNode>,
+            Without<EventLogHint>,
+        ),
+    >,
+) {
+    if marker.is_none() {
+        return;
+    }
+    commands.remove_resource::<EnableLogOnAnimationEnd>();
+    log.enabled = true;
+    for mut vis in &mut container_query {
+        *vis = Visibility::Inherited;
+    }
+    for mut vis in &mut hint_query {
+        *vis = Visibility::Inherited;
+    }
+    for mut vis in &mut toggle_hint_query {
+        *vis = Visibility::Inherited;
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn toggle_event_log(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut log: ResMut<EventLog>,
+    mut container_query: Query<
+        (Entity, &mut Visibility, &mut ScrollPosition),
+        (With<EventLogNode>, Without<EventLogHint>),
+    >,
+    children_query: Query<&Children>,
+    mut hint_query: Query<&mut Visibility, (With<EventLogHint>, Without<EventLogNode>)>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyL) {
+        return;
+    }
+
+    log.enabled = !log.enabled;
+
+    if log.enabled {
+        for (_, mut vis, _) in &mut container_query {
+            *vis = Visibility::Inherited;
+        }
+        for mut vis in &mut hint_query {
+            *vis = Visibility::Inherited;
+        }
+    } else {
+        // Clear log entries and hide
+        for (entity, mut vis, mut scroll) in &mut container_query {
+            if let Ok(children) = children_query.get(entity) {
+                for child in children.iter() {
+                    commands.entity(child).despawn();
+                }
+            }
+            scroll.y = 0.0;
+            *vis = Visibility::Hidden;
+        }
+        for mut vis in &mut hint_query {
+            *vis = Visibility::Hidden;
+        }
+        log.pending.clear();
+    }
+}
 
 impl EventLog {
     fn push(&mut self, text: String) {
+        if !self.enabled {
+            return;
+        }
         self.pending.push(PendingLogEntry {
             text,
             color: EVENT_LOG_COLOR,
@@ -909,6 +1067,9 @@ impl EventLog {
     }
 
     fn push_red(&mut self, text: String) {
+        if !self.enabled {
+            return;
+        }
         self.pending.push(PendingLogEntry {
             text,
             color: EVENT_LOG_COLOR_RED,
@@ -916,6 +1077,9 @@ impl EventLog {
     }
 
     fn separator(&mut self) {
+        if !self.enabled {
+            return;
+        }
         self.pending.push(PendingLogEntry {
             text:  EVENT_LOG_SEPARATOR.into(),
             color: EVENT_LOG_COLOR,
@@ -925,11 +1089,11 @@ impl EventLog {
 
 fn fmt_vec3(v: Vec3) -> String { format!("({:.1}, {:.1}, {:.1})", v.x, v.y, v.z) }
 
-fn log_animation_start(event: On<AnimationBegin>, mut log: ResMut<EventLog>) {
+fn log_animation_begin(event: On<AnimationBegin>, mut log: ResMut<EventLog>) {
     log.push(format!("AnimationBegin\n  source={:?}", event.source));
 }
 
-fn log_animation_begin(event: On<AnimationEnd>, mut log: ResMut<EventLog>) {
+fn log_animation_end(event: On<AnimationEnd>, mut log: ResMut<EventLog>) {
     log.push(format!("AnimationEnd\n  source={:?}", event.source));
     if event.source != AnimationSource::ZoomToFit {
         log.separator();
@@ -979,20 +1143,6 @@ fn log_zoom_cancelled(_event: On<ZoomCancelled>, mut log: ResMut<EventLog>) {
 
 fn log_animation_rejected(event: On<AnimationRejected>, mut log: ResMut<EventLog>) {
     log.push_red(format!("AnimationRejected\n  source={:?}", event.source));
-}
-
-fn log_fit_visualization_begin(event: On<FitVisualizationBegin>, mut log: ResMut<EventLog>) {
-    log.push(format!(
-        "FitVisualizationBegin\n  camera={:?}",
-        event.camera_entity
-    ));
-}
-
-fn log_fit_visualization_end(event: On<FitVisualizationEnd>, mut log: ResMut<EventLog>) {
-    log.push(format!(
-        "FitVisualizationEnd\n  camera={:?}",
-        event.camera_entity
-    ));
 }
 
 /// Spawns pending log entries as child `Text` nodes inside the scroll container

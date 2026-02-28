@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AnimateToFit` event for combined orientation change and zoom-to-fit
 - `PlayAnimation` event for queued `CameraMove` sequences (`ToPosition`/`ToOrbit`)
 - `SetFitTarget` event for setting the visualization target without zooming
-- `ToggleFitVisualization` event for enabling/disabling debug visualization
+- `FitVisualization` component for enabling/disabling debug visualization (insert to enable, remove to disable)
 - `InputInterruptBehavior` component (`Cancel`/`Complete`) for controlling user input interruption during animations
 - `AnimationConflictPolicy` component (`LastWins`/`FirstWins`) for controlling animation conflict resolution
 - `AnimationRejected` event fired when `AnimationConflictPolicy::FirstWins` blocks an incoming animation
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AnimationSource` enum for distinguishing `PlayAnimation` vs `AnimateToFit` origins
 - `CurrentFitTarget` component persisted after fit for visualization continuity
 - Builder pattern on `ZoomToFit` and `AnimateToFit` (`.margin()`, `.duration()`, `.easing()`)
-- Lifecycle events: `ZoomBegin`/`ZoomEnd`/`ZoomCancelled`, `AnimationBegin`/`AnimationEnd`/`AnimationCancelled`, `CameraMoveBegin`/`CameraMoveEnd`, `FitVisualizationBegin`/`FitVisualizationEnd`
+- Lifecycle events: `ZoomBegin`/`ZoomEnd`/`ZoomCancelled`, `AnimationBegin`/`AnimationEnd`/`AnimationCancelled`, `CameraMoveBegin`/`CameraMoveEnd`
 - Perspective and orthographic projection support
 - Automatic camera smoothness stashing/restoration during animations
 - `visualization` feature flag (default-enabled) gating `FitTargetVisualizationConfig` and gizmo overlays

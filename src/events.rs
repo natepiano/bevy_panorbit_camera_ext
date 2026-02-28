@@ -172,9 +172,10 @@ pub enum AnimationSource {
 /// `AnimationEnd` → `ZoomEnd`. See the [module-level event ordering](self#event-ordering)
 /// docs for interruption and conflict scenarios.
 ///
-/// Trigger [`ToggleFitVisualization`] to see a debug visualization of the chosen
-/// `ZoomToFit` target. The last chosen target is preserved on the camera so you can
-/// continue to see the visualization after the zoom ends.
+/// Insert the [`FitVisualization`](crate::FitVisualization) component on the camera entity
+/// to see a debug visualization of the chosen `ZoomToFit` target. Remove it to disable.
+/// The last chosen target is preserved on the camera so you can continue to see the
+/// visualization after the zoom ends.
 ///
 /// Trigger [`SetFitTarget`] to control where the visualization shows before a
 /// `ZoomToFit` has been triggered.
@@ -511,46 +512,4 @@ impl SetFitTarget {
             target,
         }
     }
-}
-
-#[cfg(feature = "visualization")]
-/// `ToggleFitVisualization` — toggles the fit target debug visualization on or off
-/// for the specified camera entity.
-///
-/// - `camera_entity` — the entity with a `PanOrbitCamera` component.
-///
-/// Fires [`FitVisualizationBegin`] when enabling, [`FitVisualizationEnd`] when
-/// disabling.
-#[derive(EntityEvent, Reflect)]
-#[reflect(Event, FromReflect)]
-pub struct ToggleFitVisualization {
-    #[event_target]
-    pub camera_entity: Entity,
-}
-
-#[cfg(feature = "visualization")]
-impl ToggleFitVisualization {
-    pub const fn new(camera_entity: Entity) -> Self { Self { camera_entity } }
-}
-
-/// `FitVisualizationBegin` — emitted when fit target visualization is enabled.
-///
-/// - `camera_entity` — the camera whose visualization was enabled.
-#[cfg(feature = "visualization")]
-#[derive(EntityEvent, Reflect)]
-#[reflect(Event, FromReflect)]
-pub struct FitVisualizationBegin {
-    #[event_target]
-    pub camera_entity: Entity,
-}
-
-/// `FitVisualizationEnd` — emitted when fit target visualization is disabled.
-///
-/// - `camera_entity` — the camera whose visualization was disabled.
-#[cfg(feature = "visualization")]
-#[derive(EntityEvent, Reflect)]
-#[reflect(Event, FromReflect)]
-pub struct FitVisualizationEnd {
-    #[event_target]
-    pub camera_entity: Entity,
 }

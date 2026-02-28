@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::support::ScreenSpaceBounds;
 
 /// Gizmo config group for fit target visualization (screen-aligned overlay).
-/// Toggle via the `ToggleFitVisualization` event.
+/// Toggle by inserting/removing the `FitVisualization` component on the camera entity.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct FitTargetGizmo;
 

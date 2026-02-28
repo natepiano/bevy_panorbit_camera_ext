@@ -27,9 +27,9 @@ use animation::process_camera_move_list;
 // Components
 pub use components::AnimationConflictPolicy;
 pub use components::CurrentFitTarget;
-pub use components::InputInterruptBehavior;
 #[cfg(feature = "visualization")]
-pub use components::VisualizationActive;
+pub use components::FitVisualization;
+pub use components::InputInterruptBehavior;
 // Events
 pub use events::AnimateToFit;
 pub use events::AnimationBegin;
@@ -39,14 +39,8 @@ pub use events::AnimationRejected;
 pub use events::AnimationSource;
 pub use events::CameraMoveBegin;
 pub use events::CameraMoveEnd;
-#[cfg(feature = "visualization")]
-pub use events::FitVisualizationBegin;
-#[cfg(feature = "visualization")]
-pub use events::FitVisualizationEnd;
 pub use events::PlayAnimation;
 pub use events::SetFitTarget;
-#[cfg(feature = "visualization")]
-pub use events::ToggleFitVisualization;
 pub use events::ZoomBegin;
 pub use events::ZoomCancelled;
 pub use events::ZoomContext;

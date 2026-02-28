@@ -18,10 +18,7 @@ pub use types::FitTargetGizmo;
 use types::FitTargetViewportMargins;
 pub use types::FitTargetVisualizationConfig;
 
-use crate::components::VisualizationActive;
-use crate::events::FitVisualizationBegin;
-use crate::events::FitVisualizationEnd;
-use crate::events::ToggleFitVisualization;
+use crate::components::FitVisualization;
 
 /// Returns true when the gizmo and asset subsystems are available (absent in headless/test apps).
 fn has_gizmo_subsystem(config_store: Option<Res<GizmoConfigStore>>) -> bool {
@@ -39,65 +36,59 @@ impl Plugin for VisualizationPlugin {
         }
 
         app.init_resource::<FitTargetVisualizationConfig>()
-            .add_observer(on_toggle_fit_visualization)
+            .add_observer(on_add_fit_visualization)
+            .add_observer(on_remove_fit_visualization)
             .add_systems(Startup, init_fit_target_gizmo.run_if(has_gizmo_subsystem))
             .add_systems(
                 Update,
                 (sync_gizmo_render_layers, systems::draw_fit_target_bounds)
                     .chain()
-                    .run_if(any_with_component::<VisualizationActive>.and(has_gizmo_subsystem)),
+                    .run_if(any_with_component::<FitVisualization>.and(has_gizmo_subsystem)),
             );
     }
 }
 
-/// Observer that toggles `VisualizationActive` on the targeted camera entity and fires
-/// the corresponding `FitVisualizationBegin` or `FitVisualizationEnd` event.
-fn on_toggle_fit_visualization(
-    trigger: On<ToggleFitVisualization>,
-    mut commands: Commands,
-    active_query: Query<(), With<VisualizationActive>>,
+/// Observer that enables visualization when `FitVisualization` is added to a camera entity.
+fn on_add_fit_visualization(
+    _trigger: On<Add, FitVisualization>,
     config_store: Option<ResMut<GizmoConfigStore>>,
-    label_query: Query<Entity, With<MarginLabel>>,
-    bounds_label_query: Query<Entity, With<BoundsLabel>>,
 ) {
-    let entity = trigger.camera_entity;
-
     let Some(mut config_store) = config_store else {
         warn!(
-            "`ToggleFitVisualization` triggered but `GizmoPlugin` is not present — \
+            "`FitVisualization` added but `GizmoPlugin` is not present — \
              gizmo visualization requires `GizmoPlugin` to be added to the app"
         );
         return;
     };
 
-    if active_query.get(entity).is_ok() {
-        // Disable — remove marker, disable gizmo config, clean up labels
-        commands
-            .entity(entity)
-            .remove::<(VisualizationActive, FitTargetViewportMargins)>();
+    let (config, _) = config_store.config_mut::<FitTargetGizmo>();
+    config.enabled = true;
+}
+
+/// Observer that disables visualization when `FitVisualization` is removed from a camera entity.
+fn on_remove_fit_visualization(
+    trigger: On<Remove, FitVisualization>,
+    mut commands: Commands,
+    config_store: Option<ResMut<GizmoConfigStore>>,
+    label_query: Query<Entity, With<MarginLabel>>,
+    bounds_label_query: Query<Entity, With<BoundsLabel>>,
+) {
+    let entity = trigger.entity;
+
+    if let Some(mut config_store) = config_store {
         let (config, _) = config_store.config_mut::<FitTargetGizmo>();
         config.enabled = false;
+    }
 
-        // Clean up all visualization labels since the system will no longer run
-        if !label_query.is_empty() {
-            labels::cleanup_margin_labels(commands.reborrow(), label_query);
-        }
-        for label_entity in &bounds_label_query {
-            commands.entity(label_entity).despawn();
-        }
+    // Clean up viewport margins from the camera entity
+    commands.entity(entity).remove::<FitTargetViewportMargins>();
 
-        commands.trigger(FitVisualizationEnd {
-            camera_entity: entity,
-        });
-    } else {
-        // Enable — insert marker, enable gizmo config
-        commands.entity(entity).insert(VisualizationActive);
-        let (config, _) = config_store.config_mut::<FitTargetGizmo>();
-        config.enabled = true;
-
-        commands.trigger(FitVisualizationBegin {
-            camera_entity: entity,
-        });
+    // Clean up all visualization labels since the system will no longer run
+    if !label_query.is_empty() {
+        labels::cleanup_margin_labels(commands.reborrow(), label_query);
+    }
+    for label_entity in &bounds_label_query {
+        commands.entity(label_entity).despawn();
     }
 }
 

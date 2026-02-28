@@ -84,9 +84,11 @@ pub struct SmoothnessStash {
     pub orbit: f32,
 }
 
-/// Marker component indicating that fit target visualization is active on this camera.
-/// Inserted/removed by the `ToggleFitVisualization` observer.
+/// Enables fit target debug visualization on a camera entity.
+///
+/// Insert this component to enable visualization, remove it to disable.
+/// The presence or absence of the component is the toggle — no boolean field needed.
 #[cfg(feature = "visualization")]
-#[derive(Component, Reflect)]
-#[reflect(Component)]
-pub struct VisualizationActive;
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+pub struct FitVisualization;

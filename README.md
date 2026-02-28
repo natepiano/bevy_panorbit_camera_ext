@@ -1,5 +1,7 @@
 # bevy_panorbit_camera_ext
 
+<img src="assets/zoom_to_fit_visualization.png" alt="Zoom-to-fit visualization" width="600">
+
 Extension library for [`bevy_panorbit_camera`](https://github.com/Plonq/bevy_panorbit_camera) providing camera animation, zoom-to-fit, and helper utilities.
 
 ## Features
@@ -15,7 +17,7 @@ Add the plugin to your app alongside `PanOrbitCameraPlugin`:
 ```rust
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCameraPlugin;
-use bevy_panorbit_camera_ext::PanorbitCameraExtPlugin;
+use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 
 App::new()
     .add_plugins(DefaultPlugins)
@@ -119,8 +121,9 @@ Sets the debug visualization target entity on a camera without triggering any zo
 ```rust
 use std::time::Duration;
 
-// Preview what the debug visualization looks like for this entity
+// Set the target and enable debug visualization
 commands.trigger(SetFitTarget::new(camera_entity, target_entity));
+commands.entity(camera_entity).insert(FitVisualization);
 
 // Later, when ready, trigger the actual zoom
 commands.trigger(
@@ -128,6 +131,9 @@ commands.trigger(
         .margin(DEFAULT_MARGIN)
         .duration(Duration::from_millis(500)),
 );
+
+// Disable debug visualization
+commands.entity(camera_entity).remove::<FitVisualization>();
 ```
 
 ### Lifecycle Events
