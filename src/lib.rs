@@ -26,7 +26,7 @@ pub use animation::CameraMoveList;
 use animation::process_camera_move_list;
 // Components
 pub use components::CurrentFitTarget;
-pub use components::InterruptBehavior;
+pub use components::InputInterruptBehavior;
 #[cfg(feature = "visualization")]
 pub use components::VisualizationActive;
 // Events

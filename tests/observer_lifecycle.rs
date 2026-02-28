@@ -11,7 +11,7 @@ use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveList;
 use bevy_panorbit_camera_ext::CurrentFitTarget;
-use bevy_panorbit_camera_ext::InterruptBehavior;
+use bevy_panorbit_camera_ext::InputInterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::SetFitTarget;
@@ -268,7 +268,7 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
     };
     let camera_entity = app
         .world_mut()
-        .spawn((camera, InterruptBehavior::Cancel))
+        .spawn((camera, InputInterruptBehavior::Cancel))
         .id();
 
     let first_move = CameraMove::ToOrbit {
@@ -341,7 +341,7 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
     };
     let camera_entity = app
         .world_mut()
-        .spawn((camera, InterruptBehavior::Complete))
+        .spawn((camera, InputInterruptBehavior::Complete))
         .id();
 
     let first_move = CameraMove::ToOrbit {

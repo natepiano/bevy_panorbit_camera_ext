@@ -31,7 +31,7 @@ use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
 use bevy_panorbit_camera_ext::FitVisualizationBegin;
 use bevy_panorbit_camera_ext::FitVisualizationEnd;
-use bevy_panorbit_camera_ext::InterruptBehavior;
+use bevy_panorbit_camera_ext::InputInterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::ToggleFitVisualization;
@@ -133,7 +133,7 @@ struct Selected;
 struct EventLogNode;
 
 #[derive(Component)]
-struct InterruptBehaviorHint;
+struct InputInterruptBehaviorLabel;
 
 struct EventLine {
     text:      String,
@@ -341,7 +341,7 @@ fn setup(
 
     // Interrupt behavior hint (bottom-left)
     commands.spawn((
-        Text::new(interrupt_behavior_hint_text(InterruptBehavior::Cancel)),
+        Text::new(interrupt_behavior_hint_text(InputInterruptBehavior::Cancel)),
         TextFont {
             font_size: 13.0,
             ..default()
@@ -353,7 +353,7 @@ fn setup(
             left: Val::Px(12.0),
             ..default()
         },
-        InterruptBehaviorHint,
+        InputInterruptBehaviorLabel,
     ));
 
     // Event log display (top-right, grows downward)
@@ -686,13 +686,13 @@ fn toggle_projection(
     *pending_fit = true;
 }
 
-fn interrupt_behavior_hint_text(behavior: InterruptBehavior) -> String {
+fn interrupt_behavior_hint_text(behavior: InputInterruptBehavior) -> String {
     match behavior {
-        InterruptBehavior::Cancel => {
+        InputInterruptBehavior::Cancel => {
             "InterruptBehavior::Cancel - camera input during animation will cancel it".into()
         },
-        InterruptBehavior::Complete => {
-            "InterruptBehavior::Complete - camera input during animation will jump to final position"
+        InputInterruptBehavior::Complete => {
+            "InputInterruptBehavior::Complete - camera input during animation will jump to final position"
                 .into()
         },
     }
@@ -702,8 +702,8 @@ fn toggle_interrupt_behavior(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
-    mut behavior_query: Query<&mut InterruptBehavior>,
-    mut hint_query: Query<&mut Text, With<InterruptBehaviorHint>>,
+    mut behavior_query: Query<&mut InputInterruptBehavior>,
+    mut hint_query: Query<&mut Text, With<InputInterruptBehaviorLabel>>,
     time: Res<Time>,
     mut log: ResMut<EventLog>,
 ) {
@@ -712,27 +712,27 @@ fn toggle_interrupt_behavior(
     }
 
     let Ok(mut behavior) = behavior_query.get_mut(scene.camera) else {
-        // No `InterruptBehavior` on camera yet — insert one (toggled from default)
+        // No `InputInterruptBehavior` on camera yet — insert one (toggled from default)
         commands
             .entity(scene.camera)
-            .insert(InterruptBehavior::Complete);
+            .insert(InputInterruptBehavior::Complete);
         for mut text in &mut hint_query {
-            **text = interrupt_behavior_hint_text(InterruptBehavior::Complete);
+            **text = interrupt_behavior_hint_text(InputInterruptBehavior::Complete);
         }
-        log.push("InterruptBehavior: Complete".into(), &time);
+        log.push("InputInterruptBehavior: Complete".into(), &time);
         return;
     };
 
     let new_behavior = match *behavior {
-        InterruptBehavior::Cancel => InterruptBehavior::Complete,
-        InterruptBehavior::Complete => InterruptBehavior::Cancel,
+        InputInterruptBehavior::Cancel => InputInterruptBehavior::Complete,
+        InputInterruptBehavior::Complete => InputInterruptBehavior::Cancel,
     };
     *behavior = new_behavior;
 
     for mut text in &mut hint_query {
         **text = interrupt_behavior_hint_text(new_behavior);
     }
-    log.push(format!("InterruptBehavior: {new_behavior:?}"), &time);
+    log.push(format!("InputInterruptBehavior: {new_behavior:?}"), &time);
 }
 
 // ============================================================================

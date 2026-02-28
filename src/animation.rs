@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::components::AnimationSourceMarker;
-use crate::components::InterruptBehavior;
+use crate::components::InputInterruptBehavior;
 use crate::components::ZoomAnimationMarker;
 use crate::events::AnimationCancelled;
 use crate::events::AnimationEnd;
@@ -170,7 +170,7 @@ impl MoveState {
 /// Camera smoothing is automatically disabled while camera_moves are in progress and
 /// restored when the queue completes via the `SmoothnessStash` observer.
 #[derive(Component, Reflect, Default)]
-#[require(crate::components::InterruptBehavior)]
+#[require(crate::components::InputInterruptBehavior)]
 #[reflect(Component, Default)]
 pub struct CameraMoveList {
     pub camera_moves: VecDeque<CameraMove>,
@@ -251,13 +251,13 @@ fn handle_interrupt(
     entity: Entity,
     pan_orbit: &mut PanOrbitCamera,
     queue: &CameraMoveList,
-    interrupt_behavior: &InterruptBehavior,
+    interrupt_behavior: &InputInterruptBehavior,
     source: AnimationSource,
     current_move: &CameraMove,
     zoom_marker: Option<&ZoomAnimationMarker>,
 ) {
     match interrupt_behavior {
-        InterruptBehavior::Cancel => {
+        InputInterruptBehavior::Cancel => {
             // Stop where we are — fire cancelled events
             commands
                 .entity(entity)
@@ -279,7 +279,7 @@ fn handle_interrupt(
                 });
             }
         },
-        InterruptBehavior::Complete => {
+        InputInterruptBehavior::Complete => {
             // Jump to the final position of the entire queue
             if let Some(final_move) = queue.camera_moves.back() {
                 let (yaw, pitch, radius) = final_move.orbital_params();
@@ -475,7 +475,7 @@ pub fn process_camera_move_list(
         Entity,
         &mut PanOrbitCamera,
         &mut CameraMoveList,
-        &InterruptBehavior,
+        &InputInterruptBehavior,
         Option<&ZoomAnimationMarker>,
         Option<&AnimationSourceMarker>,
     )>,

@@ -10,15 +10,15 @@ use crate::events::AnimationSource;
 /// Configures what happens when external camera input interrupts an animation.
 ///
 /// This is a required component on [`CameraMoveList`](crate::CameraMoveList) — if not
-/// explicitly inserted, it defaults to [`Cancel`](InterruptBehavior::Cancel).
+/// explicitly inserted, it defaults to [`Cancel`](InputInterruptBehavior::Cancel).
 ///
-/// - [`Cancel`](InterruptBehavior::Cancel) — stop the camera where it is and fire `*Cancelled`
+/// - [`Cancel`](InputInterruptBehavior::Cancel) — stop the camera where it is and fire `*Cancelled`
 ///   events
-/// - [`Complete`](InterruptBehavior::Complete) — jump to the final position of the entire queue and
-///   fire normal `*End` events
+/// - [`Complete`](InputInterruptBehavior::Complete) — jump to the final position of the entire
+///   queue and fire normal `*End` events
 #[derive(Component, Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
 #[reflect(Component, Default)]
-pub enum InterruptBehavior {
+pub enum InputInterruptBehavior {
     /// Stop the camera at its current position. Fires `AnimationCancelled` or `ZoomCancelled`.
     #[default]
     Cancel,
