@@ -160,7 +160,7 @@ pub enum AnimationSource {
 /// `ZoomToFit` — frames a target entity in the camera view without changing the camera angle.
 ///
 /// - `camera_entity` — the entity with a `PanOrbitCamera` component.
-/// - `target` — the entity to frame; must have an `Aabb` (added automatically to meshes).
+/// - `target` — the entity to frame; must have a `Mesh3d` (direct or on descendants).
 /// - `margin` — total fraction of the screen to leave as space between the target's screen-space
 ///   bounding box and the screen edge, split equally across both sides of the constraining
 ///   dimension (e.g. `0.25` → ~12.5% each side).
@@ -335,7 +335,8 @@ impl PlayAnimation {
 /// `AnimationBegin` — emitted when a `CameraMoveList` begins processing.
 ///
 /// - `camera_entity` — the camera being animated.
-/// - `source` — whether this animation originated from [`PlayAnimation`] or [`AnimateToFit`].
+/// - `source` — whether this animation originated from [`PlayAnimation`], [`ZoomToFit`], or
+///   [`AnimateToFit`].
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct AnimationBegin {
@@ -347,7 +348,8 @@ pub struct AnimationBegin {
 /// `AnimationEnd` — emitted when a `CameraMoveList` finishes all its queued moves.
 ///
 /// - `camera_entity` — the camera that finished animating.
-/// - `source` — whether this animation originated from [`PlayAnimation`] or [`AnimateToFit`].
+/// - `source` — whether this animation originated from [`PlayAnimation`], [`ZoomToFit`], or
+///   [`AnimateToFit`].
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct AnimationEnd {
@@ -356,7 +358,7 @@ pub struct AnimationEnd {
     pub source:        AnimationSource,
 }
 
-/// `AnimationCancelled` — emitted when a [`PlayAnimation`] or [`AnimateToFit`] is
+/// `AnimationCancelled` — emitted when a [`PlayAnimation`], [`ZoomToFit`], or [`AnimateToFit`] is
 /// cancelled before completion. The camera stays at its current position — no snap to
 /// final.
 ///
@@ -368,7 +370,8 @@ pub struct AnimationEnd {
 ///   cancelling the in-flight (non-zoom) animation.
 ///
 /// - `camera_entity` — the camera whose animation was cancelled.
-/// - `source` — whether this animation originated from [`PlayAnimation`] or [`AnimateToFit`].
+/// - `source` — whether this animation originated from [`PlayAnimation`], [`ZoomToFit`], or
+///   [`AnimateToFit`].
 /// - `camera_move` — the [`CameraMove`] that was in progress when cancelled.
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
@@ -423,7 +426,7 @@ pub struct CameraMoveEnd {
 /// entity in view.
 ///
 /// - `camera_entity` — the entity with a `PanOrbitCamera` component.
-/// - `target` — the entity to frame; must have an `Aabb` (added automatically to meshes).
+/// - `target` — the entity to frame; must have a `Mesh3d` (direct or on descendants).
 /// - `yaw` — final yaw in radians; updates `PanOrbitCamera::target_yaw`.
 /// - `pitch` — final pitch in radians; updates `PanOrbitCamera::target_pitch`.
 /// - `margin` — see [`ZoomToFit`] for details on how margin is applied.
@@ -491,7 +494,8 @@ impl AnimateToFit {
 /// to inspect bounds before triggering [`ZoomToFit`].
 ///
 /// - `camera_entity` — the entity with a `PanOrbitCamera` component.
-/// - `target` — the entity whose bounds to visualize; must have an `Aabb`.
+/// - `target` — the entity whose bounds to visualize; must have a `Mesh3d` (direct or on
+///   descendants).
 #[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
 pub struct SetFitTarget {

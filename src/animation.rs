@@ -168,7 +168,7 @@ impl MoveState {
 /// when the queue is empty.
 ///
 /// Camera smoothing is automatically disabled while camera_moves are in progress and
-/// restored when the queue completes via the `SmoothnessStash` observer.
+/// restored when the queue completes via the `restore_smoothness_on_move_end` observer.
 #[derive(Component, Reflect, Default)]
 #[require(crate::components::InputInterruptBehavior)]
 #[reflect(Component, Default)]

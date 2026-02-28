@@ -65,9 +65,9 @@ pub struct CurrentFitTarget(pub Entity);
 pub struct ZoomAnimationMarker(pub ZoomContext);
 
 /// Marker component that tracks whether an animation was triggered by
-/// [`PlayAnimation`](crate::PlayAnimation) or [`AnimateToFit`](crate::AnimateToFit).
-/// Inserted alongside [`CameraMoveList`](crate::CameraMoveList) and removed when the
-/// animation ends or is cancelled.
+/// [`PlayAnimation`](crate::PlayAnimation), [`ZoomToFit`](crate::ZoomToFit), or
+/// [`AnimateToFit`](crate::AnimateToFit). Inserted alongside
+/// [`CameraMoveList`](crate::CameraMoveList) and removed when the animation ends or is cancelled.
 #[derive(Component)]
 pub struct AnimationSourceMarker(pub AnimationSource);
 
