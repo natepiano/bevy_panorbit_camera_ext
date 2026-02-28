@@ -165,9 +165,14 @@ pub struct ZoomCancelled {
 /// `PlayAnimation` — plays a queued sequence of [`CameraMove`] steps.
 ///
 /// - `camera_entity` — the entity with a `PanOrbitCamera` component.
-/// - `camera_moves` — a [`VecDeque`] of [`CameraMove`] steps to play in order. Each [`CameraMove`]
-///   is either a `ToPosition` (world-space translation + focus) or a `ToOrbit` (orbital parameters
-///   around a focus point), each with its own duration and easing.
+/// - `camera_moves` — accepts any `impl IntoIterator<Item = CameraMove>` (arrays, [`Vec`],
+///   [`VecDeque`], etc.). Each [`CameraMove`] is either a `ToPosition` (world-space translation +
+///   focus) or a `ToOrbit` (orbital parameters around a focus point), each with its own duration
+///   and easing.
+///
+/// ```rust,ignore
+/// commands.trigger(PlayAnimation::new(camera, [move1, move2, move3]));
+/// ```
 ///
 /// Fires [`AnimationBegin`] at queue start, then [`CameraMoveBegin`] →
 /// [`CameraMoveEnd`] for each move, and finally [`AnimationEnd`] when the queue is
@@ -181,10 +186,10 @@ pub struct PlayAnimation {
 }
 
 impl PlayAnimation {
-    pub const fn new(camera_entity: Entity, camera_moves: VecDeque<CameraMove>) -> Self {
+    pub fn new(camera_entity: Entity, camera_moves: impl IntoIterator<Item = CameraMove>) -> Self {
         Self {
             camera_entity,
-            camera_moves,
+            camera_moves: camera_moves.into_iter().collect(),
         }
     }
 }
@@ -343,22 +348,44 @@ impl SetFitTarget {
     }
 }
 
-/// `ToggleFitVisualization` — toggles the fit target debug visualization on or off.
-/// This is a global toggle (not entity-targeted) — fire it with
-/// `commands.trigger(ToggleFitVisualization)`.
+#[cfg(feature = "visualization")]
+/// `ToggleFitVisualization` — toggles the fit target debug visualization on or off
+/// for the specified camera entity.
+///
+/// - `camera_entity` — the entity with a `PanOrbitCamera` component.
 ///
 /// Fires [`FitVisualizationBegin`] when enabling, [`FitVisualizationEnd`] when
 /// disabling.
-#[derive(Event, Reflect)]
+#[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct ToggleFitVisualization;
+pub struct ToggleFitVisualization {
+    #[event_target]
+    pub camera_entity: Entity,
+}
+
+#[cfg(feature = "visualization")]
+impl ToggleFitVisualization {
+    pub const fn new(camera_entity: Entity) -> Self { Self { camera_entity } }
+}
 
 /// `FitVisualizationBegin` — emitted when fit target visualization is enabled.
-#[derive(Event, Reflect)]
+///
+/// - `camera_entity` — the camera whose visualization was enabled.
+#[cfg(feature = "visualization")]
+#[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct FitVisualizationBegin;
+pub struct FitVisualizationBegin {
+    #[event_target]
+    pub camera_entity: Entity,
+}
 
 /// `FitVisualizationEnd` — emitted when fit target visualization is disabled.
-#[derive(Event, Reflect)]
+///
+/// - `camera_entity` — the camera whose visualization was disabled.
+#[cfg(feature = "visualization")]
+#[derive(EntityEvent, Reflect)]
 #[reflect(Event, FromReflect)]
-pub struct FitVisualizationEnd;
+pub struct FitVisualizationEnd {
+    #[event_target]
+    pub camera_entity: Entity,
+}

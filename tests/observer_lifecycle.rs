@@ -15,7 +15,6 @@ use bevy_panorbit_camera_ext::InterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::SetFitTarget;
-use bevy_panorbit_camera_ext::SmoothnessStash;
 use bevy_panorbit_camera_ext::ZoomBegin;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
@@ -116,14 +115,6 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
     app.world_mut().trigger(first);
     app.update();
 
-    let stash = *app
-        .world()
-        .get::<SmoothnessStash>(camera_entity)
-        .expect("stash should be inserted on first animation start");
-    assert_eq!(stash.zoom, 0.25);
-    assert_eq!(stash.pan, 0.5);
-    assert_eq!(stash.orbit, 0.75);
-
     let camera_after_first = app
         .world()
         .get::<PanOrbitCamera>(camera_entity)
@@ -149,13 +140,14 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
     app.world_mut().trigger(second);
     app.update();
 
-    let stash_after_second = *app
+    // Smoothness should still be zeroed during active animation
+    let camera_after_second = app
         .world()
-        .get::<SmoothnessStash>(camera_entity)
-        .expect("stash should remain present during active animation");
-    assert_eq!(stash_after_second.zoom, 0.25);
-    assert_eq!(stash_after_second.pan, 0.5);
-    assert_eq!(stash_after_second.orbit, 0.75);
+        .get::<PanOrbitCamera>(camera_entity)
+        .expect("camera should exist");
+    assert_eq!(camera_after_second.zoom_smoothness, 0.0);
+    assert_eq!(camera_after_second.pan_smoothness, 0.0);
+    assert_eq!(camera_after_second.orbit_smoothness, 0.0);
 }
 
 #[test]
@@ -209,14 +201,6 @@ fn direct_camera_move_list_insertion_stashes_and_disables_smoothness() {
             Duration::from_millis(500),
         )])));
     app.update();
-
-    let stash = *app
-        .world()
-        .get::<SmoothnessStash>(camera_entity)
-        .expect("stash should be inserted for direct CameraMoveList additions");
-    assert_eq!(stash.zoom, 0.2);
-    assert_eq!(stash.pan, 0.3);
-    assert_eq!(stash.orbit, 0.4);
 
     let camera_after = app
         .world()
@@ -328,7 +312,6 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
         ]
     );
     assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
-    assert!(app.world().get::<SmoothnessStash>(camera_entity).is_none());
 
     let camera = app
         .world()
@@ -403,7 +386,6 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
         vec![LifecycleEvent::AnimationBegin, LifecycleEvent::AnimationEnd]
     );
     assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
-    assert!(app.world().get::<SmoothnessStash>(camera_entity).is_none());
 
     let camera = app
         .world()
@@ -458,7 +440,6 @@ fn normal_completion_restores_smoothness_after_queue_finishes() {
         vec![LifecycleEvent::AnimationBegin, LifecycleEvent::AnimationEnd]
     );
     assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
-    assert!(app.world().get::<SmoothnessStash>(camera_entity).is_none());
 
     let camera = app
         .world()

@@ -475,10 +475,11 @@ fn toggle_debug_visualization(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut active: ResMut<DebugVisualizationActive>,
+    scene: Res<SceneEntities>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyD) {
         active.0 = !active.0;
-        commands.trigger(ToggleFitVisualization);
+        commands.trigger(ToggleFitVisualization::new(scene.camera));
     }
 }
 
@@ -815,19 +816,25 @@ fn log_zoom_cancelled(_event: On<ZoomCancelled>, time: Res<Time>, mut log: ResMu
 }
 
 fn log_fit_visualization_begin(
-    _event: On<FitVisualizationBegin>,
+    event: On<FitVisualizationBegin>,
     time: Res<Time>,
     mut log: ResMut<EventLog>,
 ) {
-    log.push("FitVisualizationBegin".to_string(), &time);
+    log.push(
+        format!("FitVisualizationBegin\n  camera={:?}", event.camera_entity),
+        &time,
+    );
 }
 
 fn log_fit_visualization_end(
-    _event: On<FitVisualizationEnd>,
+    event: On<FitVisualizationEnd>,
     time: Res<Time>,
     mut log: ResMut<EventLog>,
 ) {
-    log.push("FitVisualizationEnd".to_string(), &time);
+    log.push(
+        format!("FitVisualizationEnd\n  camera={:?}", event.camera_entity),
+        &time,
+    );
 }
 
 fn update_event_log_text(

@@ -62,3 +62,10 @@ pub struct SmoothnessStash {
     pub pan:   f32,
     pub orbit: f32,
 }
+
+/// Marker component indicating that fit target visualization is active on this camera.
+/// Inserted/removed by the `ToggleFitVisualization` observer.
+#[cfg(feature = "visualization")]
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct VisualizationActive;

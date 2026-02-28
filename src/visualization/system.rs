@@ -211,7 +211,6 @@ pub fn draw_fit_target_bounds(
     mut commands: Commands,
     mut gizmos: Gizmos<FitTargetGizmo>,
     config: Res<FitTargetVisualizationConfig>,
-    config_store: Res<GizmoConfigStore>,
     camera_query: Query<
         (
             Entity,
@@ -233,9 +232,6 @@ pub fn draw_fit_target_bounds(
     else {
         return;
     };
-
-    let (gizmo_config, _) = config_store.config::<FitTargetGizmo>();
-    let visualization_enabled = gizmo_config.enabled;
 
     let Some((vertices, _)) = extract_mesh_vertices(
         current_target.0,
@@ -274,19 +270,17 @@ pub fn draw_fit_target_bounds(
     draw_rectangle(&mut gizmos, &corners, &config);
 
     // Silhouette convex hull
-    if visualization_enabled {
-        draw_silhouette(
-            &mut gizmos,
-            &vertices,
-            &cam_basis,
-            avg_depth,
-            is_ortho,
-            config.silhouette_color,
-        );
-    }
+    draw_silhouette(
+        &mut gizmos,
+        &vertices,
+        &cam_basis,
+        avg_depth,
+        is_ortho,
+        config.silhouette_color,
+    );
 
     // "Screen space bounds" label
-    if visualization_enabled && let Some(vp) = viewport_size {
+    if let Some(vp) = viewport_size {
         let upper_left = norm_to_viewport(
             bounds.min_norm_x,
             bounds.max_norm_y,
@@ -311,7 +305,7 @@ pub fn draw_fit_target_bounds(
         avg_depth,
         is_ortho,
         &config,
-        visualization_enabled,
+        true,
         viewport_size,
     );
 
@@ -321,6 +315,6 @@ pub fn draw_fit_target_bounds(
         &label_query,
         &bounds_label_query,
         &visible_edges,
-        visualization_enabled,
+        true,
     );
 }

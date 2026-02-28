@@ -17,18 +17,38 @@ mod events;
 mod fit;
 mod observers;
 mod support;
+#[cfg(feature = "visualization")]
 mod visualization;
 
 // Animation types
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
 use animation::process_camera_move_list;
-pub use components::AnimationSourceMarker;
 // Components
 pub use components::CurrentFitTarget;
 pub use components::InterruptBehavior;
-pub use components::SmoothnessStash;
-pub use components::ZoomAnimationMarker;
+#[cfg(feature = "visualization")]
+pub use components::VisualizationActive;
+// Events
+pub use events::AnimateToFit;
+pub use events::AnimationBegin;
+pub use events::AnimationCancelled;
+pub use events::AnimationEnd;
+pub use events::AnimationSource;
+pub use events::CameraMoveBegin;
+pub use events::CameraMoveEnd;
+#[cfg(feature = "visualization")]
+pub use events::FitVisualizationBegin;
+#[cfg(feature = "visualization")]
+pub use events::FitVisualizationEnd;
+pub use events::PlayAnimation;
+pub use events::SetFitTarget;
+#[cfg(feature = "visualization")]
+pub use events::ToggleFitVisualization;
+pub use events::ZoomBegin;
+pub use events::ZoomCancelled;
+pub use events::ZoomEnd;
+pub use events::ZoomToFit;
 use observers::on_animate_to_fit;
 use observers::on_camera_move_list_added;
 use observers::on_play_animation;
@@ -36,38 +56,8 @@ use observers::on_set_fit_target;
 use observers::on_zoom_to_fit;
 use observers::restore_smoothness_on_move_end;
 // Visualization
+#[cfg(feature = "visualization")]
 pub use visualization::FitTargetVisualizationConfig;
-
-// Events — grouped by feature, each trigger followed by its fired events.
-#[rustfmt::skip]
-mod _events {
-    // ZoomToFit
-    pub use super::events::ZoomToFit;
-    pub use super::events::ZoomBegin;
-    pub use super::events::ZoomEnd;
-    pub use super::events::ZoomCancelled;
-
-    // PlayAnimation
-    pub use super::events::AnimationSource;
-    pub use super::events::PlayAnimation;
-    pub use super::events::AnimationBegin;
-    pub use super::events::AnimationEnd;
-    pub use super::events::AnimationCancelled;
-    pub use super::events::CameraMoveBegin;
-    pub use super::events::CameraMoveEnd;
-
-    // AnimateToFit (shares PlayAnimation lifecycle events)
-    pub use super::events::AnimateToFit;
-
-    // SetFitTarget
-    pub use super::events::SetFitTarget;
-
-    // ToggleFitVisualization
-    pub use super::events::ToggleFitVisualization;
-    pub use super::events::FitVisualizationBegin;
-    pub use super::events::FitVisualizationEnd;
-}
-pub use _events::*;
 
 /// Plugin that adds all camera extension functionality
 pub struct PanOrbitCameraExtPlugin;
@@ -87,6 +77,7 @@ impl Plugin for PanOrbitCameraExtPlugin {
             .add_systems(Update, process_camera_move_list);
 
         // Register visualization systems and resources
+        #[cfg(feature = "visualization")]
         visualization::register(app);
     }
 }

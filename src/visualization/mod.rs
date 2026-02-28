@@ -19,6 +19,7 @@ use system::draw_fit_target_bounds;
 pub use types::FitTargetGizmo;
 pub use types::FitTargetVisualizationConfig;
 
+use crate::components::VisualizationActive;
 use crate::events::FitVisualizationBegin;
 use crate::events::FitVisualizationEnd;
 use crate::events::ToggleFitVisualization;
@@ -43,46 +44,48 @@ pub fn register(app: &mut App) {
             Update,
             (sync_gizmo_render_layers, draw_fit_target_bounds)
                 .chain()
-                .run_if(has_gizmo_subsystem),
-        )
-        .add_systems(
-            Update,
-            cleanup_labels_when_disabled.run_if(has_gizmo_subsystem),
+                .run_if(any_with_component::<VisualizationActive>.and(has_gizmo_subsystem)),
         );
 }
 
-/// Observer that toggles the `FitTargetGizmo` enabled flag and fires the
-/// corresponding `FitVisualizationBegin` or `FitVisualizationEnd` event.
+/// Observer that toggles `VisualizationActive` on the targeted camera entity and fires
+/// the corresponding `FitVisualizationBegin` or `FitVisualizationEnd` event.
 fn on_toggle_fit_visualization(
-    _trigger: On<ToggleFitVisualization>,
+    trigger: On<ToggleFitVisualization>,
     mut commands: Commands,
+    active_query: Query<(), With<VisualizationActive>>,
     mut config_store: ResMut<GizmoConfigStore>,
-) {
-    let (config, _) = config_store.config_mut::<FitTargetGizmo>();
-    config.enabled = !config.enabled;
-
-    if config.enabled {
-        commands.trigger(FitVisualizationBegin);
-    } else {
-        commands.trigger(FitVisualizationEnd);
-    }
-}
-
-/// System that cleans up all visualization labels when gizmo is disabled.
-fn cleanup_labels_when_disabled(
-    mut commands: Commands,
-    config_store: Res<GizmoConfigStore>,
     label_query: Query<Entity, With<MarginLabel>>,
     bounds_label_query: Query<Entity, With<BoundsLabel>>,
 ) {
-    let (config, _) = config_store.config::<FitTargetGizmo>();
-    if !config.enabled {
+    let entity = trigger.camera_entity;
+
+    if active_query.get(entity).is_ok() {
+        // Disable — remove marker, disable gizmo config, clean up labels
+        commands.entity(entity).remove::<VisualizationActive>();
+        let (config, _) = config_store.config_mut::<FitTargetGizmo>();
+        config.enabled = false;
+
+        // Clean up all visualization labels since the system will no longer run
         if !label_query.is_empty() {
             cleanup_margin_labels(commands.reborrow(), label_query);
         }
-        for entity in &bounds_label_query {
-            commands.entity(entity).despawn();
+        for label_entity in &bounds_label_query {
+            commands.entity(label_entity).despawn();
         }
+
+        commands.trigger(FitVisualizationEnd {
+            camera_entity: entity,
+        });
+    } else {
+        // Enable — insert marker, enable gizmo config
+        commands.entity(entity).insert(VisualizationActive);
+        let (config, _) = config_store.config_mut::<FitTargetGizmo>();
+        config.enabled = true;
+
+        commands.trigger(FitVisualizationBegin {
+            camera_entity: entity,
+        });
     }
 }
 
