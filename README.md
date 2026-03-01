@@ -1,6 +1,6 @@
 # bevy_panorbit_camera_ext
 
-<img src="assets/demo.gif" alt="Zoom-to-fit demo" width="600">
+<img src="assets/extras.gif" alt="Zoom-to-fit extras" width="600">
 
 Extension library for [`bevy_panorbit_camera`](https://github.com/Plonq/bevy_panorbit_camera) providing camera animation, zoom-to-fit, and helper utilities.
 
@@ -26,10 +26,10 @@ App::new()
     .run();
 ```
 
-Check out the [demo example](examples/demo.rs) to see everything in action, or run it with:
+Check out the [extras example](examples/extras.rs) to see everything in action, or run it with:
 
 ```sh
-cargo run --example demo
+cargo run --example extras
 ```
 
 ## Events

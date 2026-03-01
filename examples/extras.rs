@@ -10,7 +10,6 @@ use std::f32::consts::PI;
 use std::time::Duration;
 
 use bevy::camera::ScalingMode;
-use bevy::color::palettes::basic::SILVER;
 use bevy::color::palettes::css::DEEP_SKY_BLUE;
 use bevy::light::CascadeShadowConfig;
 use bevy::light::CascadeShadowConfigBuilder;
@@ -259,7 +258,7 @@ fn setup(
         .spawn((
             Mesh3d(meshes.add(Plane3d::default().mesh().size(12.0, 12.0))),
             MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::from(SILVER).with_alpha(0.85),
+                base_color: Color::srgb(0.3, 0.5, 0.3).with_alpha(0.85),
                 alpha_mode: AlphaMode::Blend,
                 double_sided: true,
                 cull_mode: None,
@@ -333,7 +332,7 @@ fn setup(
                         .major_resolution(64),
                 ),
             ),
-            MeshMaterial3d(materials.add(Color::srgb(0.3, 0.8, 0.4))),
+            MeshMaterial3d(materials.add(Color::srgb(0.9, 0.5, 0.1))),
             Transform::from_xyz(2.5, MESH_CENTER_Y, 0.0),
             MeshShape::Torus {
                 minor_radius: torus_minor,

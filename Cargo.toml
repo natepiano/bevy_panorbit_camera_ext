@@ -12,7 +12,7 @@ bevy = "0.18.0"
 bevy_panorbit_camera = "0.34.0"
 
 [[example]]
-name = "demo"
+name = "extras"
 
 [dev-dependencies]
 bevy_panorbit_camera_ext = { path = ".", features = ["visualization"] }
