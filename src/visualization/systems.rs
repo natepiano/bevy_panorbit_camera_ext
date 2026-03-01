@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy_panorbit_camera::PanOrbitCamera;
 
 use super::convex_hull::convex_hull_2d;
 use super::convex_hull::project_vertices_to_2d;
@@ -20,6 +19,7 @@ use super::types::FitTargetGizmo;
 use super::types::FitTargetViewportMargins;
 use super::types::FitTargetVisualizationConfig;
 use crate::components::CurrentFitTarget;
+use crate::components::FitVisualization;
 use crate::fit::Edge;
 use crate::support::CameraBasis;
 use crate::support::ScreenSpaceBounds;
@@ -133,12 +133,12 @@ fn draw_margin_lines_and_labels(
     commands: &mut Commands,
     gizmos: &mut Gizmos<FitTargetGizmo>,
     label_query: &mut Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
+    camera_entity: Entity,
     bounds: &ScreenSpaceBounds,
     cam_basis: &CameraBasis,
     avg_depth: f32,
     is_ortho: bool,
     config: &FitTargetVisualizationConfig,
-    visualization_enabled: bool,
     viewport_size: Option<Vec2>,
 ) -> Vec<Edge> {
     let h_balanced = is_horizontally_balanced(bounds, crate::fit::TOLERANCE);
@@ -160,52 +160,43 @@ fn draw_margin_lines_and_labels(
         let color = calculate_edge_color(edge, h_balanced, v_balanced, config);
         gizmos.line(boundary_pos, screen_pos, color);
 
-        if visualization_enabled {
-            let Some(vp) = viewport_size else {
-                continue;
-            };
-            let percentage = margin_percentage(bounds, edge);
-            let text = format!("margin: {percentage:.3}%");
-            let label_screen_pos = calculate_label_pixel_position(edge, bounds, vp);
+        let Some(vp) = viewport_size else {
+            continue;
+        };
+        let percentage = margin_percentage(bounds, edge);
+        let text = format!("margin: {percentage:.3}%");
+        let label_screen_pos = calculate_label_pixel_position(edge, bounds, vp);
 
-            update_or_create_margin_label(
-                commands,
-                label_query,
-                edge,
-                text,
-                color,
-                label_screen_pos,
-                vp,
-            );
-        }
+        update_or_create_margin_label(
+            commands,
+            label_query,
+            camera_entity,
+            edge,
+            text,
+            color,
+            label_screen_pos,
+            vp,
+        );
     }
 
     visible_edges
 }
 
-/// Removes labels for edges no longer visible or when visualization is disabled.
-#[allow(clippy::type_complexity)]
-fn cleanup_stale_labels(
+/// Removes margin labels for edges no longer visible, scoped to a specific camera.
+fn cleanup_stale_margin_labels(
     commands: &mut Commands,
     label_query: &Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
-    bounds_label_query: &Query<(Entity, &mut Node), (With<BoundsLabel>, Without<MarginLabel>)>,
+    camera_entity: Entity,
     visible_edges: &[Edge],
-    visualization_enabled: bool,
 ) {
     for (entity, label, _, _, _) in label_query {
-        if !visualization_enabled || !visible_edges.contains(&label.edge) {
-            commands.entity(entity).despawn();
-        }
-    }
-
-    if !visualization_enabled {
-        for (entity, _) in bounds_label_query {
+        if label.camera_entity == camera_entity && !visible_edges.contains(&label.edge) {
             commands.entity(entity).despawn();
         }
     }
 }
 
-/// Draws screen-aligned bounds for the current fit target.
+/// Draws screen-aligned bounds for all cameras with `FitVisualization`.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn draw_fit_target_bounds(
     mut commands: Commands,
@@ -219,102 +210,94 @@ pub fn draw_fit_target_bounds(
             &Projection,
             &CurrentFitTarget,
         ),
-        With<PanOrbitCamera>,
+        With<FitVisualization>,
     >,
     mesh_query: Query<&Mesh3d>,
     children_query: Query<&Children>,
     global_transform_query: Query<&GlobalTransform>,
     meshes: Res<Assets<Mesh>>,
     mut label_query: Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
-    mut bounds_label_query: Query<(Entity, &mut Node), (With<BoundsLabel>, Without<MarginLabel>)>,
+    mut bounds_label_query: Query<(Entity, &BoundsLabel, &mut Node), Without<MarginLabel>>,
 ) {
-    let Ok((camera_entity, cam, cam_global, projection, current_target)) = camera_query.single()
-    else {
-        return;
-    };
+    for (camera_entity, cam, cam_global, projection, current_target) in &camera_query {
+        let Some((vertices, _)) = extract_mesh_vertices(
+            current_target.0,
+            &children_query,
+            &mesh_query,
+            &global_transform_query,
+            &meshes,
+        ) else {
+            continue;
+        };
 
-    let Some((vertices, _)) = extract_mesh_vertices(
-        current_target.0,
-        &children_query,
-        &mesh_query,
-        &global_transform_query,
-        &meshes,
-    ) else {
-        return;
-    };
+        let cam_basis = CameraBasis::from_global_transform(cam_global);
 
-    let cam_basis = CameraBasis::from_global_transform(cam_global);
+        let Some(aspect_ratio) = projection_aspect_ratio(projection, cam.logical_viewport_size())
+        else {
+            continue;
+        };
 
-    let Some(aspect_ratio) = projection_aspect_ratio(projection, cam.logical_viewport_size())
-    else {
-        return;
-    };
+        let Some((bounds, depths)) =
+            ScreenSpaceBounds::from_points(&vertices, cam_global, projection, aspect_ratio)
+        else {
+            continue;
+        };
 
-    let Some((bounds, depths)) =
-        ScreenSpaceBounds::from_points(&vertices, cam_global, projection, aspect_ratio)
-    else {
-        return;
-    };
+        let avg_depth = depths.avg_depth();
+        let is_ortho = matches!(projection, Projection::Orthographic(_));
+        let viewport_size = cam.logical_viewport_size();
 
-    let avg_depth = depths.avg_depth();
-    let is_ortho = matches!(projection, Projection::Orthographic(_));
-    let viewport_size = cam.logical_viewport_size();
+        // Update margin percentages on camera entity for BRP inspection
+        commands
+            .entity(camera_entity)
+            .insert(FitTargetViewportMargins::from_bounds(&bounds));
 
-    // Update margin percentages on camera entity for BRP inspection
-    commands
-        .entity(camera_entity)
-        .insert(FitTargetViewportMargins::from_bounds(&bounds));
+        // Bounding rectangle
+        let corners = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);
+        draw_rectangle(&mut gizmos, &corners, &config);
 
-    // Bounding rectangle
-    let corners = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);
-    draw_rectangle(&mut gizmos, &corners, &config);
-
-    // Silhouette convex hull
-    draw_silhouette(
-        &mut gizmos,
-        &vertices,
-        &cam_basis,
-        avg_depth,
-        is_ortho,
-        config.silhouette_color,
-    );
-
-    // "Screen space bounds" label
-    if let Some(vp) = viewport_size {
-        let upper_left = norm_to_viewport(
-            bounds.min_norm_x,
-            bounds.max_norm_y,
-            bounds.half_extent_x,
-            bounds.half_extent_y,
-            vp,
+        // Silhouette convex hull
+        draw_silhouette(
+            &mut gizmos,
+            &vertices,
+            &cam_basis,
+            avg_depth,
+            is_ortho,
+            config.silhouette_color,
         );
-        update_or_create_bounds_label(
+
+        // "Screen space bounds" label
+        if let Some(vp) = viewport_size {
+            let upper_left = norm_to_viewport(
+                bounds.min_norm_x,
+                bounds.max_norm_y,
+                bounds.half_extent_x,
+                bounds.half_extent_y,
+                vp,
+            );
+            update_or_create_bounds_label(
+                &mut commands,
+                &mut bounds_label_query,
+                camera_entity,
+                bounds_label_position(upper_left),
+            );
+        }
+
+        // Margin lines + labels
+        let visible_edges = draw_margin_lines_and_labels(
             &mut commands,
-            &mut bounds_label_query,
-            bounds_label_position(upper_left),
+            &mut gizmos,
+            &mut label_query,
+            camera_entity,
+            &bounds,
+            &cam_basis,
+            avg_depth,
+            is_ortho,
+            &config,
+            viewport_size,
         );
+
+        // Remove stale margin labels for this camera
+        cleanup_stale_margin_labels(&mut commands, &label_query, camera_entity, &visible_edges);
     }
-
-    // Margin lines + labels
-    let visible_edges = draw_margin_lines_and_labels(
-        &mut commands,
-        &mut gizmos,
-        &mut label_query,
-        &bounds,
-        &cam_basis,
-        avg_depth,
-        is_ortho,
-        &config,
-        true,
-        viewport_size,
-    );
-
-    // Remove stale labels
-    cleanup_stale_labels(
-        &mut commands,
-        &label_query,
-        &bounds_label_query,
-        &visible_edges,
-        true,
-    );
 }

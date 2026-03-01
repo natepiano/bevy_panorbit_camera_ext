@@ -21,6 +21,12 @@ pub const CENTERING_MAX_ITERATIONS: usize = 10;
 pub const CENTERING_TOLERANCE: f32 = 0.0001; // normalized screen-space center offset
 pub const MIN_MARGIN: f32 = 0.0;
 pub const MAX_MARGIN: f32 = 0.9999;
+/// Minimum search radius as a fraction of the object radius (0.1x).
+pub const MIN_RADIUS_MULTIPLIER: f32 = 0.1;
+/// Maximum search radius as a multiple of the object radius (100x).
+pub const MAX_RADIUS_MULTIPLIER: f32 = 100.0;
+/// Initial best-guess radius as a multiple of the object radius (2x).
+pub const INITIAL_RADIUS_MULTIPLIER: f32 = 2.0;
 /// Returns the zoom margin multiplier (1.0 / (1.0 - margin))
 /// For example, a margin of 0.08 returns 1.087 (8% margin)
 pub const fn zoom_margin_multiplier(margin: f32) -> f32 { 1.0 / (1.0 - margin) }
@@ -156,9 +162,9 @@ pub fn calculate_fit(
     // For perspective: radius = camera distance (changes apparent size).
     // For ortho: PanOrbitCamera maps radius → `OrthographicProjection::scale`,
     //   so searching over radius effectively searches over scale.
-    let mut min_radius = object_radius * 0.1;
-    let mut max_radius = object_radius * 100.0;
-    let mut best_radius = object_radius * 2.0;
+    let mut min_radius = object_radius * MIN_RADIUS_MULTIPLIER;
+    let mut max_radius = object_radius * MAX_RADIUS_MULTIPLIER;
+    let mut best_radius = object_radius * INITIAL_RADIUS_MULTIPLIER;
     let mut best_focus = geometric_center;
     let mut best_error = f32::INFINITY;
     let mut found_projectable_bounds = false;

@@ -10,17 +10,20 @@ const LABEL_FONT_SIZE: f32 = 11.0;
 /// Pixel offset used to keep labels off line endpoints and screen edges.
 const LABEL_PIXEL_OFFSET: f32 = 8.0;
 
-/// Component marking margin percentage labels.
+/// Component marking margin percentage labels, scoped to a specific camera entity.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 pub struct MarginLabel {
-    pub edge: Edge,
+    pub edge:          Edge,
+    pub camera_entity: Entity,
 }
 
-/// Component marking the "screen space bounds" label.
+/// Component marking the "screen space bounds" label, scoped to a specific camera entity.
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-pub struct BoundsLabel;
+pub struct BoundsLabel {
+    pub camera_entity: Entity,
+}
 
 /// Calculates the viewport pixel position for a margin label, offset by a fixed
 /// number of pixels from the screen-edge endpoint of the margin line.
@@ -99,6 +102,7 @@ fn margin_label_node(edge: Edge, screen_pos: Vec2, viewport_size: Vec2) -> Node 
 pub fn update_or_create_margin_label(
     commands: &mut Commands,
     label_query: &mut Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
+    camera_entity: Entity,
     edge: Edge,
     text: String,
     color: Color,
@@ -107,7 +111,7 @@ pub fn update_or_create_margin_label(
 ) {
     let mut found = false;
     for (_, label, mut label_text, mut node, mut text_color) in label_query {
-        if label.edge == edge {
+        if label.camera_entity == camera_entity && label.edge == edge {
             **label_text = text.clone();
             text_color.0 = color;
             apply_margin_label_anchor(&mut node, edge, screen_pos, viewport_size);
@@ -125,22 +129,32 @@ pub fn update_or_create_margin_label(
             },
             TextColor(color),
             margin_label_node(edge, screen_pos, viewport_size),
-            MarginLabel { edge },
+            MarginLabel {
+                edge,
+                camera_entity,
+            },
         ));
     }
 }
 
-#[allow(clippy::type_complexity)]
 /// Updates an existing bounds label position or creates a new one.
 pub fn update_or_create_bounds_label(
     commands: &mut Commands,
-    bounds_query: &mut Query<(Entity, &mut Node), (With<BoundsLabel>, Without<MarginLabel>)>,
+    bounds_query: &mut Query<(Entity, &BoundsLabel, &mut Node), Without<MarginLabel>>,
+    camera_entity: Entity,
     screen_pos: Vec2,
 ) {
-    if let Ok((_, mut node)) = bounds_query.single_mut() {
-        node.left = Val::Px(screen_pos.x);
-        node.top = Val::Px(screen_pos.y);
-    } else {
+    let mut found = false;
+    for (_, label, mut node) in bounds_query.iter_mut() {
+        if label.camera_entity == camera_entity {
+            node.left = Val::Px(screen_pos.x);
+            node.top = Val::Px(screen_pos.y);
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
         commands.spawn((
             Text::new("screen space bounds"),
             TextFont {
@@ -154,17 +168,7 @@ pub fn update_or_create_bounds_label(
                 top: Val::Px(screen_pos.y),
                 ..default()
             },
-            BoundsLabel,
+            BoundsLabel { camera_entity },
         ));
-    }
-}
-
-/// Despawns all active margin labels.
-pub fn cleanup_margin_labels(
-    mut commands: Commands,
-    label_query: Query<Entity, With<MarginLabel>>,
-) {
-    for entity in &label_query {
-        commands.entity(entity).despawn();
     }
 }
