@@ -45,21 +45,23 @@ fn on_remove_fit_visualization(
     label_query: Query<(Entity, &MarginLabel)>,
     bounds_label_query: Query<(Entity, &BoundsLabel)>,
 ) {
-    let camera_entity = trigger.entity;
+    let camera = trigger.entity;
 
-    // Clean up viewport margins from the camera entity
+    // Clean up viewport margins from the camera entity.
+    // `try_remove` silently skips if the entity was despawned this frame
+    // (e.g. closing a secondary window triggers component removal during despawn).
     commands
-        .entity(camera_entity)
-        .remove::<FitTargetViewportMargins>();
+        .entity(camera)
+        .try_remove::<FitTargetViewportMargins>();
 
     // Clean up labels belonging to this camera
     for (entity, label) in &label_query {
-        if label.camera_entity == camera_entity {
+        if label.camera == camera {
             commands.entity(entity).despawn();
         }
     }
     for (entity, label) in &bounds_label_query {
-        if label.camera_entity == camera_entity {
+        if label.camera == camera {
             commands.entity(entity).despawn();
         }
     }
@@ -76,10 +78,7 @@ fn sync_gizmo_render_layers(
     gizmo_config.depth_bias = -1.0;
 
     // Apply render layers from the first visualization-enabled camera
-    for render_layers in &camera_query {
-        if let Some(layers) = render_layers {
-            gizmo_config.render_layers = layers.clone();
-        }
-        break;
+    if let Some(Some(layers)) = camera_query.iter().next() {
+        gizmo_config.render_layers = layers.clone();
     }
 }

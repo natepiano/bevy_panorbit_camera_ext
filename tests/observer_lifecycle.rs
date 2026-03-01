@@ -10,10 +10,10 @@ use bevy_panorbit_camera_ext::AnimationCancelled;
 use bevy_panorbit_camera_ext::AnimationConflictPolicy;
 use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::AnimationRejected;
+use bevy_panorbit_camera_ext::CameraInputInterruptBehavior;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveList;
 use bevy_panorbit_camera_ext::CurrentFitTarget;
-use bevy_panorbit_camera_ext::InputInterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::SetFitTarget;
@@ -84,19 +84,19 @@ fn spawn_fit_camera_and_target(app: &mut App) -> (Entity, Entity) {
         Camera::default(),
         Projection::Perspective(PerspectiveProjection::default()),
     ));
-    let camera_entity = camera.id();
+    let camera = camera.id();
 
     let mesh_handle = {
         let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
         meshes.add(Cuboid::new(1.0, 1.0, 1.0))
     };
 
-    let target_entity = app
+    let target = app
         .world_mut()
         .spawn((Mesh3d(mesh_handle), GlobalTransform::default()))
         .id();
 
-    (camera_entity, target_entity)
+    (camera, target)
 }
 
 fn make_move(duration: Duration) -> CameraMove {
@@ -123,9 +123,9 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
         ..default()
     };
 
-    let camera_entity = app.world_mut().spawn(camera).id();
+    let camera = app.world_mut().spawn(camera).id();
     let first = PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(600))]),
     );
     app.world_mut().trigger(first);
@@ -133,7 +133,7 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
 
     let camera_after_first = app
         .world()
-        .get::<PanOrbitCamera>(camera_entity)
+        .get::<PanOrbitCamera>(camera)
         .expect("camera should exist");
     assert_eq!(camera_after_first.zoom_smoothness, 0.0);
     assert_eq!(camera_after_first.pan_smoothness, 0.0);
@@ -142,7 +142,7 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
     {
         let mut camera_mut = app
             .world_mut()
-            .get_mut::<PanOrbitCamera>(camera_entity)
+            .get_mut::<PanOrbitCamera>(camera)
             .expect("camera should exist");
         camera_mut.zoom_smoothness = 9.0;
         camera_mut.pan_smoothness = 8.0;
@@ -150,7 +150,7 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
     }
 
     let second = PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(600))]),
     );
     app.world_mut().trigger(second);
@@ -159,7 +159,7 @@ fn play_animation_retrigger_preserves_original_smoothness_stash() {
     // Smoothness should still be zeroed during active animation
     let camera_after_second = app
         .world()
-        .get::<PanOrbitCamera>(camera_entity)
+        .get::<PanOrbitCamera>(camera)
         .expect("camera should exist");
     assert_eq!(camera_after_second.zoom_smoothness, 0.0);
     assert_eq!(camera_after_second.pan_smoothness, 0.0);
@@ -172,27 +172,25 @@ fn set_fit_target_event_updates_current_fit_target() {
     app.add_plugins(MinimalPlugins);
     app.add_plugins(PanOrbitCameraExtPlugin);
 
-    let camera_entity = app.world_mut().spawn_empty().id();
+    let camera = app.world_mut().spawn_empty().id();
     let target_a = app.world_mut().spawn_empty().id();
     let target_b = app.world_mut().spawn_empty().id();
 
-    app.world_mut()
-        .trigger(SetFitTarget::new(camera_entity, target_a));
+    app.world_mut().trigger(SetFitTarget::new(camera, target_a));
     app.update();
 
     let current = app
         .world()
-        .get::<CurrentFitTarget>(camera_entity)
+        .get::<CurrentFitTarget>(camera)
         .expect("fit target should be set by observer");
     assert_eq!(current.0, target_a);
 
-    app.world_mut()
-        .trigger(SetFitTarget::new(camera_entity, target_b));
+    app.world_mut().trigger(SetFitTarget::new(camera, target_b));
     app.update();
 
     let current = app
         .world()
-        .get::<CurrentFitTarget>(camera_entity)
+        .get::<CurrentFitTarget>(camera)
         .expect("fit target should update on repeated events");
     assert_eq!(current.0, target_b);
 }
@@ -210,9 +208,9 @@ fn direct_camera_move_list_insertion_stashes_and_disables_smoothness() {
         ..default()
     };
 
-    let camera_entity = app.world_mut().spawn(camera).id();
+    let camera = app.world_mut().spawn(camera).id();
     app.world_mut()
-        .entity_mut(camera_entity)
+        .entity_mut(camera)
         .insert(CameraMoveList::new(VecDeque::from([make_move(
             Duration::from_millis(500),
         )])));
@@ -220,7 +218,7 @@ fn direct_camera_move_list_insertion_stashes_and_disables_smoothness() {
 
     let camera_after = app
         .world()
-        .get::<PanOrbitCamera>(camera_entity)
+        .get::<PanOrbitCamera>(camera)
         .expect("camera should exist");
     assert_eq!(camera_after.zoom_smoothness, 0.0);
     assert_eq!(camera_after.pan_smoothness, 0.0);
@@ -234,10 +232,10 @@ fn zoom_to_fit_zero_duration_emits_zoom_begin_then_zoom_end_without_animation_qu
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let (camera_entity, target_entity) = spawn_fit_camera_and_target(&mut app);
+    let (camera, target) = spawn_fit_camera_and_target(&mut app);
 
     app.world_mut()
-        .trigger(ZoomToFit::new(camera_entity, target_entity).easing(EaseFunction::Linear));
+        .trigger(ZoomToFit::new(camera, target).easing(EaseFunction::Linear));
     app.update();
 
     let log = app.world().resource::<EventLog>();
@@ -245,7 +243,7 @@ fn zoom_to_fit_zero_duration_emits_zoom_begin_then_zoom_end_without_animation_qu
         log.0,
         vec![LifecycleEvent::ZoomBegin, LifecycleEvent::ZoomEnd]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 }
 
 #[test]
@@ -255,10 +253,10 @@ fn animate_to_fit_zero_duration_emits_animation_begin_then_end_without_animation
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let (camera_entity, target_entity) = spawn_fit_camera_and_target(&mut app);
+    let (camera, target) = spawn_fit_camera_and_target(&mut app);
 
     app.world_mut()
-        .trigger(AnimateToFit::new(camera_entity, target_entity).easing(EaseFunction::Linear));
+        .trigger(AnimateToFit::new(camera, target).easing(EaseFunction::Linear));
     app.update();
 
     let log = app.world().resource::<EventLog>();
@@ -266,7 +264,7 @@ fn animate_to_fit_zero_duration_emits_animation_begin_then_end_without_animation
         log.0,
         vec![LifecycleEvent::AnimationBegin, LifecycleEvent::AnimationEnd]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 }
 
 #[test]
@@ -282,9 +280,9 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
         orbit_smoothness: 0.75,
         ..default()
     };
-    let camera_entity = app
+    let camera = app
         .world_mut()
-        .spawn((camera, InputInterruptBehavior::Cancel))
+        .spawn((camera, CameraInputInterruptBehavior::Cancel))
         .id();
 
     let first_move = CameraMove::ToOrbit {
@@ -295,10 +293,8 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
         duration: Duration::from_millis(800),
         easing:   EaseFunction::Linear,
     };
-    app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
-        VecDeque::from([first_move]),
-    ));
+    app.world_mut()
+        .trigger(PlayAnimation::new(camera, VecDeque::from([first_move])));
     app.update();
 
     let sentinel_focus = Vec3::new(100.0, 200.0, 300.0);
@@ -308,7 +304,7 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
     {
         let mut camera = app
             .world_mut()
-            .get_mut::<PanOrbitCamera>(camera_entity)
+            .get_mut::<PanOrbitCamera>(camera)
             .expect("camera should exist");
         camera.target_focus = sentinel_focus;
         camera.target_yaw = sentinel_yaw;
@@ -327,11 +323,11 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
             LifecycleEvent::AnimationCancelled
         ]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 
     let camera = app
         .world()
-        .get::<PanOrbitCamera>(camera_entity)
+        .get::<PanOrbitCamera>(camera)
         .expect("camera should exist");
     assert_eq!(camera.zoom_smoothness, 0.25);
     assert_eq!(camera.pan_smoothness, 0.5);
@@ -355,9 +351,9 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
         orbit_smoothness: 0.55,
         ..default()
     };
-    let camera_entity = app
+    let camera = app
         .world_mut()
-        .spawn((camera, InputInterruptBehavior::Complete))
+        .spawn((camera, CameraInputInterruptBehavior::Complete))
         .id();
 
     let first_move = CameraMove::ToOrbit {
@@ -377,7 +373,7 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
         easing:   EaseFunction::Linear,
     };
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([first_move, final_move.clone()]),
     ));
     app.update();
@@ -385,7 +381,7 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
     {
         let mut camera = app
             .world_mut()
-            .get_mut::<PanOrbitCamera>(camera_entity)
+            .get_mut::<PanOrbitCamera>(camera)
             .expect("camera should exist");
         camera.target_focus = Vec3::new(-1.0, -1.0, -1.0);
         camera.target_yaw = -1.0;
@@ -401,11 +397,11 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
         log.0,
         vec![LifecycleEvent::AnimationBegin, LifecycleEvent::AnimationEnd]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 
     let camera = app
         .world()
-        .get::<PanOrbitCamera>(camera_entity)
+        .get::<PanOrbitCamera>(camera)
         .expect("camera should exist");
     assert_eq!(camera.zoom_smoothness, 0.15);
     assert_eq!(camera.pan_smoothness, 0.35);
@@ -440,10 +436,10 @@ fn normal_completion_restores_smoothness_after_queue_finishes() {
         orbit_smoothness: 0.65,
         ..default()
     };
-    let camera_entity = app.world_mut().spawn(camera).id();
+    let camera = app.world_mut().spawn(camera).id();
 
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::ZERO)]),
     ));
     app.update();
@@ -455,11 +451,11 @@ fn normal_completion_restores_smoothness_after_queue_finishes() {
         log.0,
         vec![LifecycleEvent::AnimationBegin, LifecycleEvent::AnimationEnd]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 
     let camera = app
         .world()
-        .get::<PanOrbitCamera>(camera_entity)
+        .get::<PanOrbitCamera>(camera)
         .expect("camera should exist");
     assert_eq!(camera.zoom_smoothness, 0.45);
     assert_eq!(camera.pan_smoothness, 0.55);
@@ -473,14 +469,14 @@ fn conflict_last_wins_animation_cancels_animation() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app
+    let camera = app
         .world_mut()
         .spawn((PanOrbitCamera::default(), AnimationConflictPolicy::LastWins))
         .id();
 
     // Start first animation (long duration so it's still in-flight)
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(5000))]),
     ));
     app.update();
@@ -490,7 +486,7 @@ fn conflict_last_wins_animation_cancels_animation() {
 
     // Trigger second animation while first is in-flight
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(500))]),
     ));
     app.update();
@@ -512,7 +508,7 @@ fn conflict_first_wins_rejects_second() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app
+    let camera = app
         .world_mut()
         .spawn((
             PanOrbitCamera::default(),
@@ -522,7 +518,7 @@ fn conflict_first_wins_rejects_second() {
 
     // Start first animation
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(5000))]),
     ));
     app.update();
@@ -532,7 +528,7 @@ fn conflict_first_wins_rejects_second() {
 
     // Trigger second animation — should be rejected
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(500))]),
     ));
     app.update();
@@ -541,7 +537,7 @@ fn conflict_first_wins_rejects_second() {
     assert_eq!(log.0, vec![LifecycleEvent::AnimationRejected]);
 
     // Original queue should still be present
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_some());
+    assert!(app.world().get::<CameraMoveList>(camera).is_some());
 }
 
 #[test]
@@ -551,7 +547,7 @@ fn conflict_first_wins_allows_after_completion() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app
+    let camera = app
         .world_mut()
         .spawn((
             PanOrbitCamera::default(),
@@ -561,7 +557,7 @@ fn conflict_first_wins_allows_after_completion() {
 
     // Start a zero-duration animation (completes instantly)
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::ZERO)]),
     ));
     app.update();
@@ -573,7 +569,7 @@ fn conflict_first_wins_allows_after_completion() {
 
     // New animation should succeed since queue is gone
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::ZERO)]),
     ));
     app.update();
@@ -595,11 +591,11 @@ fn conflict_default_is_last_wins() {
     add_lifecycle_log_observers(&mut app);
 
     // No AnimationConflictPolicy component — should default to LastWins
-    let camera_entity = app.world_mut().spawn(PanOrbitCamera::default()).id();
+    let camera = app.world_mut().spawn(PanOrbitCamera::default()).id();
 
     // Start first animation
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(5000))]),
     ));
     app.update();
@@ -609,7 +605,7 @@ fn conflict_default_is_last_wins() {
 
     // Trigger second animation — should cancel first (LastWins behavior)
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(500))]),
     ));
     app.update();
@@ -626,10 +622,10 @@ fn conflict_default_is_last_wins() {
 
 fn make_zoom_context() -> ZoomContext {
     ZoomContext {
-        target_entity: Entity::PLACEHOLDER,
-        margin:        0.1,
-        duration:      Duration::from_millis(500),
-        easing:        EaseFunction::Linear,
+        target:   Entity::PLACEHOLDER,
+        margin:   0.1,
+        duration: Duration::from_millis(500),
+        easing:   EaseFunction::Linear,
     }
 }
 
@@ -644,14 +640,14 @@ fn zoom_animated_first_wins_rejection_emits_only_animation_rejected() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let (camera_entity, target_entity) = spawn_fit_camera_and_target(&mut app);
+    let (camera, target) = spawn_fit_camera_and_target(&mut app);
     app.world_mut()
-        .entity_mut(camera_entity)
+        .entity_mut(camera)
         .insert(AnimationConflictPolicy::FirstWins);
 
     // Start a long animation so it's still in-flight
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(5000))]),
     ));
     app.update();
@@ -661,7 +657,7 @@ fn zoom_animated_first_wins_rejection_emits_only_animation_rejected() {
 
     // Trigger ZoomToFit (animated) — should be rejected with no ZoomBegin leak
     app.world_mut().trigger(
-        ZoomToFit::new(camera_entity, target_entity)
+        ZoomToFit::new(camera, target)
             .duration(Duration::from_millis(500))
             .easing(EaseFunction::Linear),
     );
@@ -678,14 +674,14 @@ fn zoom_animated_last_wins_cancels_plain_animation() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app
+    let camera = app
         .world_mut()
         .spawn((PanOrbitCamera::default(), AnimationConflictPolicy::LastWins))
         .id();
 
     // Start a long plain animation (no zoom context)
     app.world_mut().trigger(PlayAnimation::new(
-        camera_entity,
+        camera,
         VecDeque::from([make_move(Duration::from_millis(5000))]),
     ));
     app.update();
@@ -695,7 +691,7 @@ fn zoom_animated_last_wins_cancels_plain_animation() {
     // Trigger zoom animation — should cancel plain, then begin zoom
     app.world_mut().trigger(
         PlayAnimation::new(
-            camera_entity,
+            camera,
             VecDeque::from([make_move(Duration::from_millis(500))]),
         )
         .zoom_context(make_zoom_context()),
@@ -720,7 +716,7 @@ fn zoom_animated_last_wins_cancels_in_flight_zoom() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app
+    let camera = app
         .world_mut()
         .spawn((PanOrbitCamera::default(), AnimationConflictPolicy::LastWins))
         .id();
@@ -728,7 +724,7 @@ fn zoom_animated_last_wins_cancels_in_flight_zoom() {
     // Start a long zoom animation
     app.world_mut().trigger(
         PlayAnimation::new(
-            camera_entity,
+            camera,
             VecDeque::from([make_move(Duration::from_millis(5000))]),
         )
         .zoom_context(make_zoom_context()),
@@ -740,7 +736,7 @@ fn zoom_animated_last_wins_cancels_in_flight_zoom() {
     // Trigger another zoom — should cancel in-flight zoom, then begin new zoom
     app.world_mut().trigger(
         PlayAnimation::new(
-            camera_entity,
+            camera,
             VecDeque::from([make_move(Duration::from_millis(500))]),
         )
         .zoom_context(make_zoom_context()),
@@ -766,15 +762,18 @@ fn zoom_animated_cancel_interrupt_emits_cancelled_and_zoom_cancelled() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app
+    let camera = app
         .world_mut()
-        .spawn((PanOrbitCamera::default(), InputInterruptBehavior::Cancel))
+        .spawn((
+            PanOrbitCamera::default(),
+            CameraInputInterruptBehavior::Cancel,
+        ))
         .id();
 
     // Start a zoom animation
     app.world_mut().trigger(
         PlayAnimation::new(
-            camera_entity,
+            camera,
             VecDeque::from([make_move(Duration::from_millis(5000))]),
         )
         .zoom_context(make_zoom_context()),
@@ -785,7 +784,7 @@ fn zoom_animated_cancel_interrupt_emits_cancelled_and_zoom_cancelled() {
     {
         let mut camera = app
             .world_mut()
-            .get_mut::<PanOrbitCamera>(camera_entity)
+            .get_mut::<PanOrbitCamera>(camera)
             .expect("camera should exist");
         camera.target_focus = Vec3::new(100.0, 200.0, 300.0);
         camera.target_yaw = 1.25;
@@ -806,7 +805,7 @@ fn zoom_animated_cancel_interrupt_emits_cancelled_and_zoom_cancelled() {
             LifecycleEvent::ZoomCancelled,
         ]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 }
 
 #[test]
@@ -816,15 +815,18 @@ fn zoom_animated_complete_interrupt_emits_end_and_zoom_end() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app
+    let camera = app
         .world_mut()
-        .spawn((PanOrbitCamera::default(), InputInterruptBehavior::Complete))
+        .spawn((
+            PanOrbitCamera::default(),
+            CameraInputInterruptBehavior::Complete,
+        ))
         .id();
 
     // Start a zoom animation
     app.world_mut().trigger(
         PlayAnimation::new(
-            camera_entity,
+            camera,
             VecDeque::from([make_move(Duration::from_millis(5000))]),
         )
         .zoom_context(make_zoom_context()),
@@ -835,7 +837,7 @@ fn zoom_animated_complete_interrupt_emits_end_and_zoom_end() {
     {
         let mut camera = app
             .world_mut()
-            .get_mut::<PanOrbitCamera>(camera_entity)
+            .get_mut::<PanOrbitCamera>(camera)
             .expect("camera should exist");
         camera.target_focus = Vec3::new(-1.0, -1.0, -1.0);
         camera.target_yaw = -1.0;
@@ -856,7 +858,7 @@ fn zoom_animated_complete_interrupt_emits_end_and_zoom_end() {
             LifecycleEvent::ZoomEnd,
         ]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 }
 
 #[test]
@@ -866,11 +868,11 @@ fn zoom_animated_normal_completion_emits_full_lifecycle() {
     app.add_plugins(PanOrbitCameraExtPlugin);
     add_lifecycle_log_observers(&mut app);
 
-    let camera_entity = app.world_mut().spawn(PanOrbitCamera::default()).id();
+    let camera = app.world_mut().spawn(PanOrbitCamera::default()).id();
 
     // Use a zero-duration CameraMove so the queue drains immediately
     app.world_mut().trigger(
-        PlayAnimation::new(camera_entity, VecDeque::from([make_move(Duration::ZERO)]))
+        PlayAnimation::new(camera, VecDeque::from([make_move(Duration::ZERO)]))
             .zoom_context(make_zoom_context()),
     );
     app.update();
@@ -887,5 +889,5 @@ fn zoom_animated_normal_completion_emits_full_lifecycle() {
             LifecycleEvent::ZoomEnd,
         ]
     );
-    assert!(app.world().get::<CameraMoveList>(camera_entity).is_none());
+    assert!(app.world().get::<CameraMoveList>(camera).is_none());
 }

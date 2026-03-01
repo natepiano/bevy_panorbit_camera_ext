@@ -21,15 +21,15 @@ mod support;
 mod visualization;
 
 // Animation types
+use animation::process_camera_move_list;
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
-use animation::process_camera_move_list;
 // Components
 pub use components::AnimationConflictPolicy;
+pub use components::CameraInputInterruptBehavior;
 pub use components::CurrentFitTarget;
 #[cfg(feature = "visualization")]
 pub use components::FitVisualization;
-pub use components::InputInterruptBehavior;
 // Events
 pub use events::AnimateToFit;
 pub use events::AnimationBegin;

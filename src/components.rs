@@ -5,23 +5,23 @@ use bevy::prelude::*;
 use crate::events::AnimationSource;
 use crate::events::ZoomContext;
 
-/// Controls what happens when **user input** (orbit, pan, zoom) occurs during an
+/// Controls what happens when **user input to the camera** (orbit, pan, zoom) occurs during an
 /// in-flight animation.
 ///
 /// This is a required component on [`CameraMoveList`](crate::CameraMoveList) — if not
-/// explicitly inserted, it defaults to [`Cancel`](InputInterruptBehavior::Cancel).
+/// explicitly inserted, it defaults to [`Cancel`](CameraInputInterruptBehavior::Cancel).
 ///
-/// This component is orthogonal to [`AnimationConflictPolicy`] — `InputInterruptBehavior`
+/// This component is orthogonal to [`AnimationConflictPolicy`] — `CameraInputInterruptBehavior`
 /// handles physical camera input during an animation, while `AnimationConflictPolicy`
 /// handles programmatic animation requests that arrive while one is already playing.
 ///
-/// - [`Cancel`](InputInterruptBehavior::Cancel) — stop the camera where it is and fire `*Cancelled`
-///   events
-/// - [`Complete`](InputInterruptBehavior::Complete) — jump to the final position of the entire
-///   queue and fire normal `*End` events
+/// - [`Cancel`](CameraInputInterruptBehavior::Cancel) — stop the camera where it is and fire
+///   `*Cancelled` events
+/// - [`Complete`](CameraInputInterruptBehavior::Complete) — jump to the final position of the
+///   entire queue and fire normal `*End` events
 #[derive(Component, Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
 #[reflect(Component, Default)]
-pub enum InputInterruptBehavior {
+pub enum CameraInputInterruptBehavior {
     /// Stop the camera at its current position. Fires `AnimationCancelled` or `ZoomCancelled`.
     #[default]
     Cancel,
@@ -35,10 +35,10 @@ pub enum InputInterruptBehavior {
 /// Insert this component on a camera entity to configure conflict resolution. If not
 /// present, defaults to [`LastWins`](AnimationConflictPolicy::LastWins).
 ///
-/// This component is orthogonal to [`InputInterruptBehavior`] — `AnimationConflictPolicy`
+/// This component is orthogonal to [`CameraInputInterruptBehavior`] — `AnimationConflictPolicy`
 /// handles programmatic animation requests (e.g. [`ZoomToFit`](crate::ZoomToFit),
 /// [`PlayAnimation`](crate::PlayAnimation)) that conflict with an active animation, while
-/// `InputInterruptBehavior` handles physical user input interrupting an animation.
+/// `CameraInputInterruptBehavior` handles physical user input interrupting an animation.
 ///
 /// - [`LastWins`](AnimationConflictPolicy::LastWins) — cancel the current animation and start the
 ///   new one. Fires appropriate `*Cancelled` events for the interrupted operation.

@@ -49,14 +49,14 @@ use bevy::math::curve::easing::EaseFunction;
 
 // Zoom to fit at current orientation (e.g., user presses "Z" to frame selection)
 commands.trigger(
-    ZoomToFit::new(camera_entity, target_entity)
+    ZoomToFit::new(camera, target)
         .margin(DEFAULT_MARGIN)
         .duration(Duration::from_millis(500)),
 );
 
 // Animate to a specific orientation and fit (e.g., "home" button returns to front view)
 commands.trigger(
-    AnimateToFit::new(camera_entity, target_entity)
+    AnimateToFit::new(camera, target)
         .yaw(0.0)
         .pitch(0.0)
         .margin(DEFAULT_MARGIN)
@@ -80,7 +80,7 @@ let moves = VecDeque::from([
         easing:      EaseFunction::QuadraticInOut,
     },
 ]);
-commands.trigger(PlayAnimation::new(camera_entity, moves));
+commands.trigger(PlayAnimation::new(camera, moves));
 ```
 
 `CameraMove` has two variants:
@@ -97,20 +97,20 @@ one is already playing:
 - `LastWins` (default) — cancel the current animation, start the new one
 - `FirstWins` — reject the new request, current animation continues
 
-**`InputInterruptBehavior`** — what happens when the user physically moves the camera
+**`CameraInputInterruptBehavior`** — what happens when the user physically moves the camera
 during an animation:
 
 - `Cancel` (default) — stop the animation at its current position
 - `Complete` — jump to the final position of the animation
 
 These are orthogonal — `AnimationConflictPolicy` guards against programmatic conflicts,
-`InputInterruptBehavior` guards against user input.
+`CameraInputInterruptBehavior` guards against user input.
 
 ```rust
 commands.spawn((
     PanOrbitCamera::default(),
     AnimationConflictPolicy::FirstWins,
-    InputInterruptBehavior::Complete,
+    CameraInputInterruptBehavior::Complete,
 ));
 ```
 
@@ -122,18 +122,18 @@ Sets the debug visualization target entity on a camera without triggering any zo
 use std::time::Duration;
 
 // Set the target and enable debug visualization
-commands.trigger(SetFitTarget::new(camera_entity, target_entity));
-commands.entity(camera_entity).insert(FitVisualization);
+commands.trigger(SetFitTarget::new(camera, target));
+commands.entity(camera).insert(FitVisualization);
 
 // Later, when ready, trigger the actual zoom
 commands.trigger(
-    ZoomToFit::new(camera_entity, target_entity)
+    ZoomToFit::new(camera, target)
         .margin(DEFAULT_MARGIN)
         .duration(Duration::from_millis(500)),
 );
 
 // Disable debug visualization
-commands.entity(camera_entity).remove::<FitVisualization>();
+commands.entity(camera).remove::<FitVisualization>();
 ```
 
 ### Lifecycle Events
@@ -150,12 +150,12 @@ Every animation and zoom operation fires begin/end events that consumers can obs
 
 ```rust
 // React when a zoom-to-fit ends on a specific camera
-commands.entity(camera_entity).observe(|_: On<ZoomEnd>| {
+commands.entity(camera).observe(|_: On<ZoomEnd>| {
     info!("Zoom finished!");
 });
 
 // React to each individual move in an animation queue
-commands.entity(camera_entity).observe(|event: On<CameraMoveBegin>| {
+commands.entity(camera).observe(|event: On<CameraMoveBegin>| {
     info!("Move to {:?} started", event.camera_move.focus());
 });
 ```

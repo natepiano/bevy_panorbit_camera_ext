@@ -9,11 +9,15 @@
 use std::f32::consts::PI;
 use std::time::Duration;
 
+use bevy::camera::RenderTarget;
 use bevy::camera::ScalingMode;
+use bevy::camera::visibility::RenderLayers;
 use bevy::color::palettes::css::DEEP_SKY_BLUE;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy::time::Virtual;
+use bevy::ui::UiTargetCamera;
+use bevy::window::WindowRef;
 use bevy_brp_extras::BrpExtrasPlugin;
 use bevy_panorbit_camera::PanOrbitCamera;
 use bevy_panorbit_camera::PanOrbitCameraPlugin;
@@ -29,34 +33,50 @@ use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
 use bevy_panorbit_camera_ext::FitVisualization;
-use bevy_panorbit_camera_ext::InputInterruptBehavior;
+use bevy_panorbit_camera_ext::CameraInputInterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::ZoomBegin;
 use bevy_panorbit_camera_ext::ZoomCancelled;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
+use bevy_window_manager::WindowManagerPlugin;
 
-const ZOOM_DURATION_MS: u64 = 1000;
-const ZOOM_MARGIN_MESH: f32 = 0.15;
-const ZOOM_MARGIN_SCENE: f32 = 0.08;
-const GIZMO_SCALE: f32 = 1.001;
-const GIZMO_DEPTH_BIAS: f32 = -0.005;
-const GIZMO_LINE_WIDTH: f32 = 3.0;
-
-const DRAG_SENSITIVITY: f32 = 0.02;
-const MESH_CENTER_Y: f32 = 1.0;
-const EVENT_LOG_FONT_SIZE: f32 = 14.0;
-const EVENT_LOG_SCROLL_SPEED: f32 = 120.0;
-const EVENT_LOG_WIDTH: f32 = 300.0;
+// durations
 const ANIMATE_FIT_DURATION_MS: u64 = 1200;
-const CAMERA_START_YAW: f32 = -0.2;
-const CAMERA_START_PITCH: f32 = 0.4;
 const ORBIT_MOVE_DURATION_MS: u64 = 800;
-const UI_FONT_SIZE: f32 = 13.0;
+const ZOOM_DURATION_MS: u64 = 1000;
+
+// camera home
+const CAMERA_START_PITCH: f32 = 0.4;
+const CAMERA_START_YAW: f32 = -0.2;
+
+// sensitivity
+const DRAG_SENSITIVITY: f32 = 0.02;
+
+// event log
 const EVENT_LOG_COLOR: Color = Color::srgba(0.0, 1.0, 0.0, 0.9);
 const EVENT_LOG_COLOR_RED: Color = Color::srgba(1.0, 0.3, 0.3, 0.9);
+const EVENT_LOG_FONT_SIZE: f32 = 14.0;
+const EVENT_LOG_SCROLL_SPEED: f32 = 120.0;
 const EVENT_LOG_SEPARATOR: &str = "- - - - - - - - - - - -";
+const EVENT_LOG_WIDTH: f32 = 300.0;
+const UI_FONT_SIZE: f32 = 13.0;
+
+
+// mesh settings
+const GIZMO_DEPTH_BIAS: f32 = -0.005;
+const GIZMO_LINE_WIDTH: f32 = 2.0;
+const GIZMO_SCALE: f32 = 1.001;
+const MESH_CENTER_Y: f32 = 1.0;
+const SELECTION_GIZMO_LAYER: usize = 1;
+const ZOOM_MARGIN_MESH: f32 = 0.15;
+const ZOOM_MARGIN_SCENE: f32 = 0.08;
+
+// window label
+const WINDOW_LABEL_DURATION_SECS: f32 = 2.0;
+
+// the easings!
 const ALL_EASINGS: &[EaseFunction] = &[
     EaseFunction::Linear,
     EaseFunction::QuadraticIn,
@@ -141,7 +161,7 @@ impl Default for ActiveEasing {
 struct EventLogNode;
 
 #[derive(Component)]
-struct InputInterruptBehaviorLabel;
+struct CameraInputInterruptBehaviorLabel;
 
 #[derive(Component)]
 struct AnimationConflictPolicyLabel;
@@ -154,6 +174,18 @@ struct EventLogHint;
 
 #[derive(Component)]
 struct EventLogToggleHint;
+
+#[derive(Resource)]
+struct SecondWindowEntities {
+    window: Entity,
+    camera: Entity,
+}
+
+#[derive(Component)]
+struct SecondWindowCamera;
+
+#[derive(Component)]
+struct WindowLabel(Timer);
 
 /// Marker resource: when present, the next `AnimationEnd` enables the event log.
 #[derive(Resource)]
@@ -177,11 +209,18 @@ struct EventLog {
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "extras - window 1".into(),
+                    ..default()
+                }),
+                ..default()
+            }),
             PanOrbitCameraPlugin,
             PanOrbitCameraExtPlugin,
             MeshPickingPlugin,
             BrpExtrasPlugin::default(),
+            WindowManagerPlugin,
         ))
         .init_gizmo_group::<SelectionGizmo>()
         .init_state::<AppState>()
@@ -195,12 +234,17 @@ fn main() {
         .add_systems(
             Update,
             (
+                cleanup_second_window,
+                log_window_focus,
+                despawn_window_labels,
                 toggle_pause,
                 toggle_event_log,
                 draw_selection_gizmo,
+                sync_selection_gizmo_layers,
                 update_event_log_text,
                 scroll_event_log,
                 (
+                    toggle_second_window,
                     toggle_debug_visualization,
                     toggle_projection,
                     randomize_easing,
@@ -233,6 +277,7 @@ fn init_selection_gizmo(mut config_store: ResMut<GizmoConfigStore>) {
     let (config, _) = config_store.config_mut::<SelectionGizmo>();
     config.depth_bias = GIZMO_DEPTH_BIAS;
     config.line.width = GIZMO_LINE_WIDTH;
+    config.render_layers = RenderLayers::layer(SELECTION_GIZMO_LAYER);
 }
 
 fn setup(
@@ -345,7 +390,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'H' Home w/animate fit to scene\n'A' animate camera\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy"),
+        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'H' Home w/animate fit to scene\n'A' animate camera\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy\n'W' toggle second window"),
         TextFont {
             font_size: UI_FONT_SIZE,
             ..default()
@@ -356,11 +401,12 @@ fn setup(
             left: Val::Px(12.0),
             ..default()
         },
+        UiTargetCamera(camera),
     ));
 
     // Interrupt behavior hint (bottom-left)
     commands.spawn((
-        Text::new(interrupt_behavior_hint_text(InputInterruptBehavior::Cancel)),
+        Text::new(interrupt_behavior_hint_text(CameraInputInterruptBehavior::Cancel)),
         TextFont {
             font_size: UI_FONT_SIZE,
             ..default()
@@ -372,7 +418,8 @@ fn setup(
             left: Val::Px(12.0),
             ..default()
         },
-        InputInterruptBehaviorLabel,
+        CameraInputInterruptBehaviorLabel,
+        UiTargetCamera(camera),
     ));
 
     // Conflict policy hint (bottom-left, above interrupt behavior)
@@ -390,6 +437,7 @@ fn setup(
             ..default()
         },
         AnimationConflictPolicyLabel,
+        UiTargetCamera(camera),
     ));
 
     // Event log scroll container (right edge, scrollable, hidden until enabled)
@@ -407,6 +455,7 @@ fn setup(
         Visibility::Hidden,
         Pickable::IGNORE,
         EventLogNode,
+        UiTargetCamera(camera),
     ));
 
     // Log toggle hint (bottom-right, always visible once initial animation completes)
@@ -427,6 +476,7 @@ fn setup(
         },
         Visibility::Hidden,
         EventLogToggleHint,
+        UiTargetCamera(camera),
     ));
 
     // Log scroll/clear hints (bottom-right, hidden until log enabled)
@@ -447,6 +497,7 @@ fn setup(
         },
         Visibility::Hidden,
         EventLogHint,
+        UiTargetCamera(camera),
     ));
 
     // Paused overlay (centered, hidden until Esc)
@@ -466,6 +517,7 @@ fn setup(
         },
         Visibility::Hidden,
         PausedOverlay,
+        UiTargetCamera(camera),
     ));
 
     commands.insert_resource(SceneEntities {
@@ -496,6 +548,169 @@ fn initial_fit_to_scene(
             .easing(EaseFunction::QuadraticInOut),
     );
     next_state.set(AppState::Running);
+}
+
+// ============================================================================
+// Second window
+// ============================================================================
+
+fn all_cameras(scene: &SceneEntities, second: Option<&SecondWindowEntities>) -> Vec<Entity> {
+    let mut cameras = vec![scene.camera];
+    if let Some(sw) = second {
+        cameras.push(sw.camera);
+    }
+    cameras
+}
+
+/// Returns the camera entity whose window is currently focused.
+fn focused_camera(
+    scene: &SceneEntities,
+    second: Option<&SecondWindowEntities>,
+    windows: &Query<&Window>,
+) -> Option<Entity> {
+    if let Some(sw) = second
+        && let Ok(win) = windows.get(sw.window)
+        && win.focused
+    {
+        return Some(sw.camera);
+    }
+    // Primary window is the default fallback
+    Some(scene.camera)
+}
+
+fn toggle_second_window(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
+    easing: Res<ActiveEasing>,
+    camera_query: Query<&PanOrbitCamera>,
+    mut log: ResMut<EventLog>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyW) {
+        return;
+    }
+
+    if let Some(sw) = second {
+        commands.entity(sw.window).despawn();
+        commands.entity(sw.camera).despawn();
+        commands.remove_resource::<SecondWindowEntities>();
+        log.push("Window 2: closed".into());
+        return;
+    }
+
+    let window = commands
+        .spawn(Window {
+            title: "extras - window 2".into(),
+            ..default()
+        })
+        .id();
+
+    // Clone settings from primary camera
+    let Ok(primary) = camera_query.get(scene.camera) else {
+        return;
+    };
+    let mut second_cam = *primary;
+    second_cam.yaw = Some(CAMERA_START_YAW);
+    second_cam.pitch = Some(CAMERA_START_PITCH);
+
+    let camera = commands
+        .spawn((
+            second_cam,
+            RenderTarget::Window(WindowRef::Entity(window)),
+            SecondWindowCamera,
+        ))
+        .id();
+
+    commands.trigger(
+        AnimateToFit::new(camera, scene.scene_bounds)
+            .yaw(CAMERA_START_YAW)
+            .pitch(CAMERA_START_PITCH)
+            .margin(ZOOM_MARGIN_SCENE)
+            .easing(easing.0),
+    );
+
+    // "Window 2" label centered in the second window, auto-despawns after a couple seconds
+    commands.spawn((
+        Text::new("Window 2"),
+        TextFont {
+            font_size: 48.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.4)),
+        TextLayout::new_with_justify(Justify::Center),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(46.0),
+            width: Val::Percent(100.0),
+            ..default()
+        },
+        UiTargetCamera(camera),
+        WindowLabel(Timer::from_seconds(
+            WINDOW_LABEL_DURATION_SECS,
+            TimerMode::Once,
+        )),
+    ));
+
+    commands.insert_resource(SecondWindowEntities { window, camera });
+    log.push("Window 2: opened".into());
+}
+
+fn log_window_focus(
+    second: Option<Res<SecondWindowEntities>>,
+    windows: Query<(Entity, &Window)>,
+    mut log: ResMut<EventLog>,
+    mut last_focused: Local<Option<Entity>>,
+) {
+    if second.is_none() {
+        *last_focused = None;
+        return;
+    }
+
+    let current_focused = windows.iter().find(|(_, w)| w.focused).map(|(e, _)| e);
+
+    if current_focused != *last_focused {
+        if let Some(focused) = current_focused {
+            let sw = second.unwrap();
+            let label = if focused == sw.window {
+                "Window 2"
+            } else {
+                "Window 1"
+            };
+            log.push(format!("{label} focused"));
+        }
+        *last_focused = current_focused;
+    }
+}
+
+fn cleanup_second_window(
+    mut commands: Commands,
+    second: Option<Res<SecondWindowEntities>>,
+    windows: Query<(), With<Window>>,
+    mut log: ResMut<EventLog>,
+) {
+    let Some(sw) = second else {
+        return;
+    };
+    // If the window entity no longer has a `Window` component, it was closed by the user
+    if windows.get(sw.window).is_err() {
+        commands.entity(sw.camera).despawn();
+        commands.remove_resource::<SecondWindowEntities>();
+        log.push("Window 2: closed".into());
+    }
+}
+
+fn despawn_window_labels(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut WindowLabel)>,
+) {
+    for (entity, mut label) in &mut query {
+        label.0.tick(time.delta());
+        if label.0.just_finished() {
+            commands.entity(entity).despawn();
+        }
+    }
 }
 
 // ============================================================================
@@ -532,7 +747,6 @@ fn toggle_pause(
 fn on_mesh_clicked(
     click: On<Pointer<Click>>,
     mut commands: Commands,
-    scene: Res<SceneEntities>,
     selected: Query<Entity, With<Selected>>,
     active_easing: Res<ActiveEasing>,
     time: Res<Time<Virtual>>,
@@ -545,9 +759,10 @@ fn on_mesh_clicked(
     }
 
     let clicked = click.entity;
+    let camera = click.hit.camera;
     commands.entity(clicked).insert(Selected);
     commands.trigger(
-        ZoomToFit::new(scene.camera, clicked)
+        ZoomToFit::new(camera, clicked)
             .margin(ZOOM_MARGIN_MESH)
             .duration(Duration::from_millis(ZOOM_DURATION_MS))
             .easing(active_easing.0),
@@ -555,7 +770,7 @@ fn on_mesh_clicked(
 }
 
 fn on_ground_clicked(
-    _click: On<Pointer<Click>>,
+    click: On<Pointer<Click>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
     selected: Query<Entity, With<Selected>>,
@@ -569,8 +784,9 @@ fn on_ground_clicked(
         commands.entity(entity).remove::<Selected>();
     }
 
+    let camera = click.hit.camera;
     commands.trigger(
-        ZoomToFit::new(scene.camera, scene.scene_bounds)
+        ZoomToFit::new(camera, scene.scene_bounds)
             .margin(ZOOM_MARGIN_SCENE)
             .duration(Duration::from_millis(ZOOM_DURATION_MS))
             .easing(active_easing.0),
@@ -578,7 +794,7 @@ fn on_ground_clicked(
 }
 
 fn on_below_clicked(
-    _click: On<Pointer<Click>>,
+    click: On<Pointer<Click>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
     selected: Query<Entity, With<Selected>>,
@@ -592,8 +808,9 @@ fn on_below_clicked(
         commands.entity(entity).remove::<Selected>();
     }
 
+    let camera = click.hit.camera;
     commands.trigger(
-        AnimateToFit::new(scene.camera, scene.scene_bounds)
+        AnimateToFit::new(camera, scene.scene_bounds)
             .yaw(CAMERA_START_YAW)
             .pitch(CAMERA_START_PITCH)
             .margin(ZOOM_MARGIN_SCENE)
@@ -622,15 +839,8 @@ fn on_mesh_dragged(
 
 fn draw_selection_gizmo(
     mut gizmos: Gizmos<SelectionGizmo>,
-    scene: Res<SceneEntities>,
-    viz_query: Query<(), With<FitVisualization>>,
     query: Query<(&Transform, &MeshShape), With<Selected>>,
 ) {
-    // Hide selection gizmo when debug visualization is active
-    if viz_query.get(scene.camera).is_ok() {
-        return;
-    }
-
     let color = Color::from(DEEP_SKY_BLUE);
     for (transform, shape) in &query {
         match shape {
@@ -663,6 +873,35 @@ fn draw_selection_gizmo(
     }
 }
 
+type GizmoLayerQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        Option<&'static FitVisualization>,
+        Option<&'static RenderLayers>,
+    ),
+    With<PanOrbitCamera>,
+>;
+
+/// Cameras with `FitVisualization` lose the selection gizmo layer so the outline
+/// doesn't compete with the debug overlay. Cameras without it get the layer back.
+fn sync_selection_gizmo_layers(mut commands: Commands, camera_query: GizmoLayerQuery) {
+    let with_selection = RenderLayers::from_layers(&[0, SELECTION_GIZMO_LAYER]);
+    let without_selection = RenderLayers::layer(0);
+
+    for (entity, has_viz, current_layers) in &camera_query {
+        let desired = if has_viz.is_some() {
+            &without_selection
+        } else {
+            &with_selection
+        };
+        if current_layers != Some(desired) {
+            commands.entity(entity).insert(desired.clone());
+        }
+    }
+}
+
 // ============================================================================
 // Keyboard actions
 // ============================================================================
@@ -671,14 +910,21 @@ fn toggle_debug_visualization(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
     viz_query: Query<(), With<FitVisualization>>,
+    windows: Query<&Window>,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyD) {
-        if viz_query.get(scene.camera).is_ok() {
-            commands.entity(scene.camera).remove::<FitVisualization>();
-        } else {
-            commands.entity(scene.camera).insert(FitVisualization);
-        }
+    if !keyboard.just_pressed(KeyCode::KeyD) {
+        return;
+    }
+
+    let Some(cam) = focused_camera(&scene, second.as_deref(), &windows) else {
+        return;
+    };
+    if viz_query.get(cam).is_ok() {
+        commands.entity(cam).remove::<FitVisualization>();
+    } else {
+        commands.entity(cam).insert(FitVisualization);
     }
 }
 
@@ -686,25 +932,29 @@ fn animate_camera(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
     easing: Res<ActiveEasing>,
     camera_query: Query<&PanOrbitCamera>,
+    windows: Query<&Window>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyA) {
         return;
     }
 
-    let Ok(camera) = camera_query.get(scene.camera) else {
+    let Some(cam) = focused_camera(&scene, second.as_deref(), &windows) else {
+        return;
+    };
+    let Ok(camera) = camera_query.get(cam) else {
         return;
     };
 
     let e = easing.0;
+    let half_pi = PI / 2.0;
     let yaw = camera.target_yaw;
     let pitch = camera.target_pitch;
     let radius = camera.target_radius;
     let focus = camera.target_focus;
-    let half_pi = PI / 2.0;
 
-    // 4 camera moves that orbit PI/2 at a time from the current position
     let camera_moves = [
         CameraMove::ToOrbit {
             focus,
@@ -740,7 +990,7 @@ fn animate_camera(
         },
     ];
 
-    commands.trigger(PlayAnimation::new(scene.camera, camera_moves));
+    commands.trigger(PlayAnimation::new(cam, camera_moves));
 }
 
 fn randomize_easing(
@@ -764,14 +1014,19 @@ fn animate_fit_to_scene(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
     easing: Res<ActiveEasing>,
+    windows: Query<&Window>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyH) {
         return;
     }
 
+    let Some(cam) = focused_camera(&scene, second.as_deref(), &windows) else {
+        return;
+    };
     commands.trigger(
-        AnimateToFit::new(scene.camera, scene.scene_bounds)
+        AnimateToFit::new(cam, scene.scene_bounds)
             .yaw(CAMERA_START_YAW)
             .pitch(CAMERA_START_PITCH)
             .margin(ZOOM_MARGIN_SCENE)
@@ -790,6 +1045,7 @@ fn toggle_projection(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
     active_easing: Res<ActiveEasing>,
     mut camera_query: Query<(&mut Projection, &mut PanOrbitCamera)>,
     mut log: ResMut<EventLog>,
@@ -798,55 +1054,68 @@ fn toggle_projection(
     // Deferred fit: projection was changed last frame, `PanOrbitCamera` has now synced.
     if *pending_fit {
         *pending_fit = false;
-        commands.trigger(
-            AnimateToFit::new(scene.camera, scene.scene_bounds)
-                .yaw(CAMERA_START_YAW)
-                .pitch(CAMERA_START_PITCH)
-                .margin(ZOOM_MARGIN_SCENE)
-                .duration(Duration::from_millis(ANIMATE_FIT_DURATION_MS))
-                .easing(active_easing.0),
-        );
+        for cam in all_cameras(&scene, second.as_deref()) {
+            commands.trigger(
+                AnimateToFit::new(cam, scene.scene_bounds)
+                    .yaw(CAMERA_START_YAW)
+                    .pitch(CAMERA_START_PITCH)
+                    .margin(ZOOM_MARGIN_SCENE)
+                    .duration(Duration::from_millis(ANIMATE_FIT_DURATION_MS))
+                    .easing(active_easing.0),
+            );
+        }
         return;
     }
 
     if !keyboard.just_pressed(KeyCode::KeyP) {
         return;
     }
-    let Ok((mut projection, mut camera)) = camera_query.single_mut() else {
-        return;
-    };
-    match *projection {
-        Projection::Perspective(_) => {
-            *projection = Projection::from(OrthographicProjection {
-                scaling_mode: ScalingMode::FixedVertical {
-                    viewport_height: 1.0,
-                },
-                far: 40.0,
-                ..OrthographicProjection::default_3d()
-            });
-            log.push("Projection: Orthographic".into());
-        },
-        Projection::Orthographic(_) => {
-            *projection = Projection::Perspective(PerspectiveProjection::default());
-            log.push("Projection: Perspective".into());
-        },
-        _ => {},
+    let mut logged = false;
+    for cam in all_cameras(&scene, second.as_deref()) {
+        let Ok((mut projection, mut camera)) = camera_query.get_mut(cam) else {
+            continue;
+        };
+        match *projection {
+            Projection::Perspective(_) => {
+                *projection = Projection::from(OrthographicProjection {
+                    scaling_mode: ScalingMode::FixedVertical {
+                        viewport_height: 1.0,
+                    },
+                    far: 40.0,
+                    ..OrthographicProjection::default_3d()
+                });
+                if !logged {
+                    log.push("Projection: Orthographic".into());
+                    logged = true;
+                }
+            },
+            Projection::Orthographic(_) => {
+                *projection = Projection::Perspective(PerspectiveProjection::default());
+                if !logged {
+                    log.push("Projection: Perspective".into());
+                    logged = true;
+                }
+            },
+            _ => {},
+        }
+        camera.force_update = true;
     }
-    camera.force_update = true;
-    *pending_fit = true;
+    if logged {
+        *pending_fit = true;
+    }
 }
 
 // ============================================================================
 // Behavior configuration
 // ============================================================================
 
-fn interrupt_behavior_hint_text(behavior: InputInterruptBehavior) -> String {
+fn interrupt_behavior_hint_text(behavior: CameraInputInterruptBehavior) -> String {
     match behavior {
-        InputInterruptBehavior::Cancel => {
-            "InputInterruptBehavior::Cancel - camera input during animation will cancel it".into()
+        CameraInputInterruptBehavior::Cancel => {
+            "CameraInputInterruptBehavior::Cancel - camera input during animation will cancel it".into()
         },
-        InputInterruptBehavior::Complete => {
-            "InputInterruptBehavior::Complete - camera input during animation will jump to final position"
+        CameraInputInterruptBehavior::Complete => {
+            "CameraInputInterruptBehavior::Complete - camera input during animation will jump to final position"
                 .into()
         },
     }
@@ -856,36 +1125,36 @@ fn toggle_interrupt_behavior(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
-    mut behavior_query: Query<&mut InputInterruptBehavior>,
-    mut hint_query: Query<&mut Text, With<InputInterruptBehaviorLabel>>,
+    second: Option<Res<SecondWindowEntities>>,
+    mut behavior_query: Query<&mut CameraInputInterruptBehavior>,
+    mut hint_query: Query<&mut Text, With<CameraInputInterruptBehaviorLabel>>,
     mut log: ResMut<EventLog>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyI) {
         return;
     }
 
-    let Ok(mut behavior) = behavior_query.get_mut(scene.camera) else {
-        // No `InputInterruptBehavior` on camera yet — insert one (toggled from default)
-        commands
-            .entity(scene.camera)
-            .insert(InputInterruptBehavior::Complete);
-        for mut text in &mut hint_query {
-            **text = interrupt_behavior_hint_text(InputInterruptBehavior::Complete);
-        }
-        log.push("InputInterruptBehavior: Complete".into());
-        return;
+    // Determine what the new behavior should be based on the primary camera
+    let new_behavior = match behavior_query.get(scene.camera) {
+        Ok(behavior) => match *behavior {
+            CameraInputInterruptBehavior::Cancel => CameraInputInterruptBehavior::Complete,
+            CameraInputInterruptBehavior::Complete => CameraInputInterruptBehavior::Cancel,
+        },
+        Err(_) => CameraInputInterruptBehavior::Complete,
     };
 
-    let new_behavior = match *behavior {
-        InputInterruptBehavior::Cancel => InputInterruptBehavior::Complete,
-        InputInterruptBehavior::Complete => InputInterruptBehavior::Cancel,
-    };
-    *behavior = new_behavior;
+    for cam in all_cameras(&scene, second.as_deref()) {
+        if let Ok(mut behavior) = behavior_query.get_mut(cam) {
+            *behavior = new_behavior;
+        } else {
+            commands.entity(cam).insert(new_behavior);
+        }
+    }
 
     for mut text in &mut hint_query {
         **text = interrupt_behavior_hint_text(new_behavior);
     }
-    log.push(format!("InputInterruptBehavior: {new_behavior:?}"));
+    log.push(format!("CameraInputInterruptBehavior: {new_behavior:?}"));
 }
 
 fn conflict_policy_hint_text(policy: AnimationConflictPolicy) -> String {
@@ -904,6 +1173,7 @@ fn toggle_animation_conflict_policy(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
     mut policy_query: Query<&mut AnimationConflictPolicy>,
     mut hint_query: Query<&mut Text, With<AnimationConflictPolicyLabel>>,
     mut log: ResMut<EventLog>,
@@ -912,23 +1182,22 @@ fn toggle_animation_conflict_policy(
         return;
     }
 
-    let Ok(mut policy) = policy_query.get_mut(scene.camera) else {
-        // No `AnimationConflictPolicy` on camera yet — insert one (toggled from default)
-        commands
-            .entity(scene.camera)
-            .insert(AnimationConflictPolicy::FirstWins);
-        for mut text in &mut hint_query {
-            **text = conflict_policy_hint_text(AnimationConflictPolicy::FirstWins);
-        }
-        log.push("AnimationConflictPolicy: FirstWins".into());
-        return;
+    // Determine what the new policy should be based on the primary camera
+    let new_policy = match policy_query.get(scene.camera) {
+        Ok(policy) => match *policy {
+            AnimationConflictPolicy::LastWins => AnimationConflictPolicy::FirstWins,
+            AnimationConflictPolicy::FirstWins => AnimationConflictPolicy::LastWins,
+        },
+        Err(_) => AnimationConflictPolicy::FirstWins,
     };
 
-    let new_policy = match *policy {
-        AnimationConflictPolicy::LastWins => AnimationConflictPolicy::FirstWins,
-        AnimationConflictPolicy::FirstWins => AnimationConflictPolicy::LastWins,
-    };
-    *policy = new_policy;
+    for cam in all_cameras(&scene, second.as_deref()) {
+        if let Ok(mut policy) = policy_query.get_mut(cam) {
+            *policy = new_policy;
+        } else {
+            commands.entity(cam).insert(new_policy);
+        }
+    }
 
     for mut text in &mut hint_query {
         **text = conflict_policy_hint_text(new_policy);

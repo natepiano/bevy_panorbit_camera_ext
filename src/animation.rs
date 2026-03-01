@@ -4,13 +4,13 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use bevy::math::curve::Curve;
 use bevy::math::curve::easing::EaseFunction;
+use bevy::math::curve::Curve;
 use bevy::prelude::*;
 use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::components::AnimationSourceMarker;
-use crate::components::InputInterruptBehavior;
+use crate::components::CameraInputInterruptBehavior;
 use crate::components::ZoomAnimationMarker;
 use crate::events::AnimationCancelled;
 use crate::events::AnimationEnd;
@@ -170,7 +170,7 @@ impl MoveState {
 /// Camera smoothing is automatically disabled while camera_moves are in progress and
 /// restored when the queue completes via the `restore_smoothness_on_move_end` observer.
 #[derive(Component, Reflect, Default)]
-#[require(crate::components::InputInterruptBehavior)]
+#[require(crate::components::CameraInputInterruptBehavior)]
 #[reflect(Component, Default)]
 pub struct CameraMoveList {
     pub camera_moves: VecDeque<CameraMove>,
@@ -228,17 +228,17 @@ fn handle_empty_queue(
         .entity(entity)
         .remove::<(CameraMoveList, AnimationSourceMarker)>();
     commands.trigger(AnimationEnd {
-        camera_entity: entity,
+        camera: entity,
         source,
     });
     if let Some(marker) = zoom_marker {
         commands.entity(entity).remove::<ZoomAnimationMarker>();
         commands.trigger(ZoomEnd {
-            camera_entity: entity,
-            target_entity: marker.0.target_entity,
-            margin:        marker.0.margin,
-            duration:      marker.0.duration,
-            easing:        marker.0.easing,
+            camera:   entity,
+            target:   marker.0.target,
+            margin:   marker.0.margin,
+            duration: marker.0.duration,
+            easing:   marker.0.easing,
         });
     }
 }
@@ -250,34 +250,34 @@ fn handle_interrupt(
     entity: Entity,
     pan_orbit: &mut PanOrbitCamera,
     queue: &CameraMoveList,
-    interrupt_behavior: &InputInterruptBehavior,
+    interrupt_behavior: &CameraInputInterruptBehavior,
     source: AnimationSource,
     current_move: &CameraMove,
     zoom_marker: Option<&ZoomAnimationMarker>,
 ) {
     match interrupt_behavior {
-        InputInterruptBehavior::Cancel => {
+        CameraInputInterruptBehavior::Cancel => {
             // Stop where we are — fire cancelled events
             commands
                 .entity(entity)
                 .remove::<(CameraMoveList, AnimationSourceMarker)>();
             commands.trigger(AnimationCancelled {
-                camera_entity: entity,
+                camera: entity,
                 source,
                 camera_move: current_move.clone(),
             });
             if let Some(marker) = zoom_marker {
                 commands.entity(entity).remove::<ZoomAnimationMarker>();
                 commands.trigger(ZoomCancelled {
-                    camera_entity: entity,
-                    target_entity: marker.0.target_entity,
-                    margin:        marker.0.margin,
-                    duration:      marker.0.duration,
-                    easing:        marker.0.easing,
+                    camera:   entity,
+                    target:   marker.0.target,
+                    margin:   marker.0.margin,
+                    duration: marker.0.duration,
+                    easing:   marker.0.easing,
                 });
             }
         },
-        InputInterruptBehavior::Complete => {
+        CameraInputInterruptBehavior::Complete => {
             // Jump to the final position of the entire queue
             if let Some(final_move) = queue.camera_moves.back() {
                 let (yaw, pitch, radius) = final_move.orbital_params();
@@ -292,17 +292,17 @@ fn handle_interrupt(
                 .entity(entity)
                 .remove::<(CameraMoveList, AnimationSourceMarker)>();
             commands.trigger(AnimationEnd {
-                camera_entity: entity,
+                camera: entity,
                 source,
             });
             if let Some(marker) = zoom_marker {
                 commands.entity(entity).remove::<ZoomAnimationMarker>();
                 commands.trigger(ZoomEnd {
-                    camera_entity: entity,
-                    target_entity: marker.0.target_entity,
-                    margin:        marker.0.margin,
-                    duration:      marker.0.duration,
-                    easing:        marker.0.easing,
+                    camera:   entity,
+                    target:   marker.0.target,
+                    margin:   marker.0.margin,
+                    duration: marker.0.duration,
+                    easing:   marker.0.easing,
                 });
             }
         },
@@ -320,8 +320,8 @@ fn handle_ready_state(
 ) -> bool {
     if current_move.duration().is_zero() {
         commands.trigger(CameraMoveBegin {
-            camera_entity: entity,
-            camera_move:   current_move.clone(),
+            camera:      entity,
+            camera_move: current_move.clone(),
         });
 
         let (target_yaw, target_pitch, target_radius) = current_move.orbital_params();
@@ -332,8 +332,8 @@ fn handle_ready_state(
         pan_orbit.force_update = true;
 
         commands.trigger(CameraMoveEnd {
-            camera_entity: entity,
-            camera_move:   current_move.clone(),
+            camera:      entity,
+            camera_move: current_move.clone(),
         });
         queue.camera_moves.pop_front();
         return true;
@@ -353,8 +353,8 @@ fn handle_ready_state(
     };
 
     commands.trigger(CameraMoveBegin {
-        camera_entity: entity,
-        camera_move:   current_move.clone(),
+        camera:      entity,
+        camera_move: current_move.clone(),
     });
 
     false
@@ -440,8 +440,8 @@ fn handle_in_progress(
     // Check if move complete and advance to next
     if is_final_frame {
         commands.trigger(CameraMoveEnd {
-            camera_entity: entity,
-            camera_move:   current_move.clone(),
+            camera:      entity,
+            camera_move: current_move.clone(),
         });
         queue.camera_moves.pop_front();
         queue.state = MoveState::Ready;
@@ -461,7 +461,7 @@ pub fn process_camera_move_list(
         Entity,
         &mut PanOrbitCamera,
         &mut CameraMoveList,
-        &InputInterruptBehavior,
+        &CameraInputInterruptBehavior,
         Option<&ZoomAnimationMarker>,
         Option<&AnimationSourceMarker>,
     )>,

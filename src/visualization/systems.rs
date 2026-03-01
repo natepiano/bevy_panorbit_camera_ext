@@ -2,12 +2,13 @@ use bevy::prelude::*;
 
 use super::convex_hull::convex_hull_2d;
 use super::convex_hull::project_vertices_to_2d;
-use super::labels::BoundsLabel;
-use super::labels::MarginLabel;
 use super::labels::bounds_label_position;
 use super::labels::calculate_label_pixel_position;
 use super::labels::update_or_create_bounds_label;
 use super::labels::update_or_create_margin_label;
+use super::labels::BoundsLabel;
+use super::labels::MarginLabel;
+use super::labels::MarginLabelParams;
 use super::screen_space::boundary_edge_center;
 use super::screen_space::is_horizontally_balanced;
 use super::screen_space::is_vertically_balanced;
@@ -21,10 +22,10 @@ use super::types::FitTargetVisualizationConfig;
 use crate::components::CurrentFitTarget;
 use crate::components::FitVisualization;
 use crate::fit::Edge;
-use crate::support::CameraBasis;
-use crate::support::ScreenSpaceBounds;
 use crate::support::extract_mesh_vertices;
 use crate::support::projection_aspect_ratio;
+use crate::support::CameraBasis;
+use crate::support::ScreenSpaceBounds;
 
 /// Calculates the color for an edge based on balance state.
 const fn calculate_edge_color(
@@ -133,7 +134,7 @@ fn draw_margin_lines_and_labels(
     commands: &mut Commands,
     gizmos: &mut Gizmos<FitTargetGizmo>,
     label_query: &mut Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
-    camera_entity: Entity,
+    camera: Entity,
     bounds: &ScreenSpaceBounds,
     cam_basis: &CameraBasis,
     avg_depth: f32,
@@ -170,12 +171,14 @@ fn draw_margin_lines_and_labels(
         update_or_create_margin_label(
             commands,
             label_query,
-            camera_entity,
-            edge,
-            text,
-            color,
-            label_screen_pos,
-            vp,
+            MarginLabelParams {
+                camera,
+                edge,
+                text,
+                color,
+                screen_pos: label_screen_pos,
+                viewport_size: vp,
+            },
         );
     }
 
@@ -186,11 +189,11 @@ fn draw_margin_lines_and_labels(
 fn cleanup_stale_margin_labels(
     commands: &mut Commands,
     label_query: &Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
-    camera_entity: Entity,
+    camera: Entity,
     visible_edges: &[Edge],
 ) {
     for (entity, label, _, _, _) in label_query {
-        if label.camera_entity == camera_entity && !visible_edges.contains(&label.edge) {
+        if label.camera == camera && !visible_edges.contains(&label.edge) {
             commands.entity(entity).despawn();
         }
     }
@@ -219,7 +222,7 @@ pub fn draw_fit_target_bounds(
     mut label_query: Query<(Entity, &MarginLabel, &mut Text, &mut Node, &mut TextColor)>,
     mut bounds_label_query: Query<(Entity, &BoundsLabel, &mut Node), Without<MarginLabel>>,
 ) {
-    for (camera_entity, cam, cam_global, projection, current_target) in &camera_query {
+    for (camera, cam, cam_global, projection, current_target) in &camera_query {
         let Some((vertices, _)) = extract_mesh_vertices(
             current_target.0,
             &children_query,
@@ -247,10 +250,12 @@ pub fn draw_fit_target_bounds(
         let is_ortho = matches!(projection, Projection::Orthographic(_));
         let viewport_size = cam.logical_viewport_size();
 
-        // Update margin percentages on camera entity for BRP inspection
+        // Update margin percentages on camera entity for BRP inspection.
+        // `try_insert` silently skips if the entity was despawned this frame
+        // (e.g. closing a secondary window while visualization is active).
         commands
-            .entity(camera_entity)
-            .insert(FitTargetViewportMargins::from_bounds(&bounds));
+            .entity(camera)
+            .try_insert(FitTargetViewportMargins::from_bounds(&bounds));
 
         // Bounding rectangle
         let corners = create_screen_corners(&bounds, &cam_basis, avg_depth, is_ortho);
@@ -278,7 +283,7 @@ pub fn draw_fit_target_bounds(
             update_or_create_bounds_label(
                 &mut commands,
                 &mut bounds_label_query,
-                camera_entity,
+                camera,
                 bounds_label_position(upper_left),
             );
         }
@@ -288,7 +293,7 @@ pub fn draw_fit_target_bounds(
             &mut commands,
             &mut gizmos,
             &mut label_query,
-            camera_entity,
+            camera,
             &bounds,
             &cam_basis,
             avg_depth,
@@ -298,6 +303,6 @@ pub fn draw_fit_target_bounds(
         );
 
         // Remove stale margin labels for this camera
-        cleanup_stale_margin_labels(&mut commands, &label_query, camera_entity, &visible_edges);
+        cleanup_stale_margin_labels(&mut commands, &label_query, camera, &visible_edges);
     }
 }
