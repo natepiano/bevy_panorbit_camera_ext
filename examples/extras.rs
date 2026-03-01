@@ -11,9 +11,6 @@ use std::time::Duration;
 
 use bevy::camera::ScalingMode;
 use bevy::color::palettes::css::DEEP_SKY_BLUE;
-use bevy::light::CascadeShadowConfig;
-use bevy::light::CascadeShadowConfigBuilder;
-use bevy::light::DirectionalLightShadowMap;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy::time::Virtual;
@@ -43,7 +40,10 @@ use bevy_panorbit_camera_ext::ZoomToFit;
 const ZOOM_DURATION_MS: u64 = 1000;
 const ZOOM_MARGIN_MESH: f32 = 0.15;
 const ZOOM_MARGIN_SCENE: f32 = 0.08;
-const GIZMO_SCALE: f32 = 1.03;
+const GIZMO_SCALE: f32 = 1.001;
+const GIZMO_DEPTH_BIAS: f32 = -0.005;
+const GIZMO_LINE_WIDTH: f32 = 3.0;
+
 const DRAG_SENSITIVITY: f32 = 0.02;
 const MESH_CENTER_Y: f32 = 1.0;
 const EVENT_LOG_FONT_SIZE: f32 = 14.0;
@@ -53,8 +53,6 @@ const ANIMATE_FIT_DURATION_MS: u64 = 1200;
 const CAMERA_START_YAW: f32 = -0.2;
 const CAMERA_START_PITCH: f32 = 0.4;
 const ORBIT_MOVE_DURATION_MS: u64 = 800;
-const CASCADE_MAX_DISTANCE_PERSPECTIVE: f32 = 20.0;
-const CASCADE_MAX_DISTANCE_ORTHOGRAPHIC: f32 = 40.0;
 const UI_FONT_SIZE: f32 = 13.0;
 const EVENT_LOG_COLOR: Color = Color::srgba(0.0, 1.0, 0.0, 0.9);
 const EVENT_LOG_COLOR_RED: Color = Color::srgba(1.0, 0.3, 0.3, 0.9);
@@ -113,6 +111,9 @@ enum AppState {
 #[derive(Component)]
 struct Selected;
 
+#[derive(Default, Reflect, GizmoConfigGroup)]
+struct SelectionGizmo;
+
 #[derive(Component)]
 enum MeshShape {
     Cuboid(Vec3),
@@ -127,7 +128,6 @@ enum MeshShape {
 struct SceneEntities {
     camera:       Entity,
     scene_bounds: Entity,
-    light:        Entity,
 }
 
 #[derive(Resource)]
@@ -183,11 +183,11 @@ fn main() {
             MeshPickingPlugin,
             BrpExtrasPlugin::default(),
         ))
-        .insert_resource(DirectionalLightShadowMap { size: 4096 })
+        .init_gizmo_group::<SelectionGizmo>()
         .init_state::<AppState>()
         .init_resource::<ActiveEasing>()
         .init_resource::<EventLog>()
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup, init_selection_gizmo))
         .add_systems(
             Update,
             initial_fit_to_scene.run_if(in_state(AppState::Loading)),
@@ -229,23 +229,10 @@ fn main() {
 // Scene setup
 // ============================================================================
 
-fn cascade_shadow_config_perspective() -> CascadeShadowConfig {
-    CascadeShadowConfigBuilder {
-        maximum_distance: CASCADE_MAX_DISTANCE_PERSPECTIVE,
-        first_cascade_far_bound: 5.0,
-        ..default()
-    }
-    .build()
-}
-
-fn cascade_shadow_config_orthographic() -> CascadeShadowConfig {
-    CascadeShadowConfigBuilder {
-        num_cascades: 4,
-        maximum_distance: CASCADE_MAX_DISTANCE_ORTHOGRAPHIC,
-        first_cascade_far_bound: 4.0,
-        ..default()
-    }
-    .build()
+fn init_selection_gizmo(mut config_store: ResMut<GizmoConfigStore>) {
+    let (config, _) = config_store.config_mut::<SelectionGizmo>();
+    config.depth_bias = GIZMO_DEPTH_BIAS;
+    config.line.width = GIZMO_LINE_WIDTH;
 }
 
 fn setup(
@@ -283,24 +270,21 @@ fn setup(
         .observe(on_below_clicked);
 
     // Directional light
-    let light = commands
-        .spawn((
-            DirectionalLight {
-                illuminance: 1500.0,
-                shadows_enabled: true,
-                ..default()
-            },
-            cascade_shadow_config_perspective(),
-            Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI / 4.0, -PI / 4.0)),
-        ))
-        .id();
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 3000.0,
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI / 4.0, -PI / 4.0)),
+    ));
 
     // Cuboid
     let cuboid_size = Vec3::new(1.0, 1.0, 1.0);
     commands
         .spawn((
             Mesh3d(meshes.add(Cuboid::new(cuboid_size.x, cuboid_size.y, cuboid_size.z))),
-            MeshMaterial3d(materials.add(Color::srgb(0.5, 0.5, 0.9))),
+            MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
             Transform::from_xyz(-2.5, MESH_CENTER_Y, 0.0),
             MeshShape::Cuboid(cuboid_size),
         ))
@@ -487,7 +471,6 @@ fn setup(
     commands.insert_resource(SceneEntities {
         camera,
         scene_bounds: ground,
-        light,
     });
 }
 
@@ -638,7 +621,7 @@ fn on_mesh_dragged(
 // ============================================================================
 
 fn draw_selection_gizmo(
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<SelectionGizmo>,
     scene: Res<SceneEntities>,
     viz_query: Query<(), With<FitVisualization>>,
     query: Query<(&Transform, &MeshShape), With<Selected>>,
@@ -841,16 +824,10 @@ fn toggle_projection(
                 far: 40.0,
                 ..OrthographicProjection::default_3d()
             });
-            commands
-                .entity(scene.light)
-                .insert(cascade_shadow_config_orthographic());
             log.push("Projection: Orthographic".into());
         },
         Projection::Orthographic(_) => {
             *projection = Projection::Perspective(PerspectiveProjection::default());
-            commands
-                .entity(scene.light)
-                .insert(cascade_shadow_config_perspective());
             log.push("Projection: Perspective".into());
         },
         _ => {},
