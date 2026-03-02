@@ -240,7 +240,7 @@ pub fn calculate_fit(
             min_radius = test_radius;
         }
 
-        if (max_radius - min_radius) < 0.001 {
+        if (max_radius - min_radius) < TOLERANCE {
             debug!(
                 "Iteration {iteration}: Converged to best radius {best_radius:.3} error={best_error:.5}"
             );

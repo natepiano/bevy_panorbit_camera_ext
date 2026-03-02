@@ -9,12 +9,14 @@ use crate::events::ZoomContext;
 /// in-flight animation.
 ///
 /// This is a required component on [`CameraMoveList`](crate::CameraMoveList) — if not
-/// explicitly inserted, it defaults to [`Cancel`](CameraInputInterruptBehavior::Cancel).
+/// explicitly inserted, it defaults to [`Ignore`](CameraInputInterruptBehavior::Ignore).
 ///
 /// This component is orthogonal to [`AnimationConflictPolicy`] — `CameraInputInterruptBehavior`
 /// handles physical camera input during an animation, while `AnimationConflictPolicy`
 /// handles programmatic animation requests that arrive while one is already playing.
 ///
+/// - [`Ignore`](CameraInputInterruptBehavior::Ignore) — disable camera input while animating and
+///   keep animating uninterrupted. No interrupt lifecycle events are emitted.
 /// - [`Cancel`](CameraInputInterruptBehavior::Cancel) — stop the camera where it is and fire
 ///   `*Cancelled` events
 /// - [`Complete`](CameraInputInterruptBehavior::Complete) — jump to the final position of the
@@ -22,8 +24,10 @@ use crate::events::ZoomContext;
 #[derive(Component, Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
 #[reflect(Component, Default)]
 pub enum CameraInputInterruptBehavior {
-    /// Stop the camera at its current position. Fires `AnimationCancelled` or `ZoomCancelled`.
+    /// Disable camera input and keep animating uninterrupted.
     #[default]
+    Ignore,
+    /// Stop the camera at its current position. Fires `AnimationCancelled` or `ZoomCancelled`.
     Cancel,
     /// Jump to the final queued position. Fires `AnimationEnd` or `ZoomEnd`.
     Complete,
@@ -71,17 +75,18 @@ pub struct ZoomAnimationMarker(pub ZoomContext);
 #[derive(Component)]
 pub struct AnimationSourceMarker(pub AnimationSource);
 
-/// Component that stores camera smoothness values during animations.
+/// Component that stores camera runtime state values during animations.
 ///
 /// When camera animations are active (via `CameraMoveList`), the smoothness values are
-/// temporarily set to 0.0 for instant movement, and the original values are stored here.
-/// When the animation completes and the component is removed, the smoothness is
-/// automatically restored via an observer.
+/// temporarily set to 0.0 for instant movement. Depending on
+/// [`CameraInputInterruptBehavior`], camera input may also be temporarily disabled.
+/// Original values are stored here and restored when the animation completes.
 #[derive(Component, Debug, Clone, Copy, Default)]
-pub struct SmoothnessStash {
-    pub zoom:  f32,
-    pub pan:   f32,
-    pub orbit: f32,
+pub struct PanOrbitCameraStash {
+    pub zoom:    f32,
+    pub pan:     f32,
+    pub orbit:   f32,
+    pub enabled: bool,
 }
 
 /// Enables fit target debug visualization on a camera entity.

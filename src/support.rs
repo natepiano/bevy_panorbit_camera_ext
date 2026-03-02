@@ -122,13 +122,10 @@ pub struct PointDepths {
     pub max_x_depth: f32,
     pub min_y_depth: f32,
     pub max_y_depth: f32,
+    #[cfg(feature = "visualization")]
     pub depth_sum:   f32,
+    #[cfg(feature = "visualization")]
     pub point_count: usize,
-}
-
-impl PointDepths {
-    /// Average depth across all projected points.
-    pub fn avg_depth(&self) -> f32 { self.depth_sum / self.point_count as f32 }
 }
 
 /// Screen-space bounds of a set of projected points, with margin distances
@@ -182,12 +179,16 @@ impl ScreenSpaceBounds {
         let mut max_x_depth = 0.0_f32;
         let mut min_y_depth = 0.0_f32;
         let mut max_y_depth = 0.0_f32;
+        #[cfg(feature = "visualization")]
         let mut depth_sum = 0.0_f32;
 
         for point in points {
             let (norm_x, norm_y, depth) = project_point(*point, &cam, is_ortho)?;
 
-            depth_sum += depth;
+            #[cfg(feature = "visualization")]
+            {
+                depth_sum += depth;
+            }
 
             if norm_x < min_norm_x {
                 min_norm_x = norm_x;
@@ -230,7 +231,9 @@ impl ScreenSpaceBounds {
             max_x_depth,
             min_y_depth,
             max_y_depth,
+            #[cfg(feature = "visualization")]
             depth_sum,
+            #[cfg(feature = "visualization")]
             point_count: points.len(),
         };
 

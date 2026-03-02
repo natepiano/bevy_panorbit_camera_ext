@@ -21,9 +21,9 @@ mod support;
 mod visualization;
 
 // Animation types
-use animation::process_camera_move_list;
 pub use animation::CameraMove;
 pub use animation::CameraMoveList;
+use animation::process_camera_move_list;
 // Components
 pub use components::AnimationConflictPolicy;
 pub use components::CameraInputInterruptBehavior;
@@ -51,7 +51,7 @@ use observers::on_camera_move_list_added;
 use observers::on_play_animation;
 use observers::on_set_fit_target;
 use observers::on_zoom_to_fit;
-use observers::restore_smoothness_on_move_end;
+use observers::restore_camera_state;
 // Visualization
 #[cfg(feature = "visualization")]
 pub use visualization::FitTargetVisualizationConfig;
@@ -64,7 +64,7 @@ impl Plugin for PanOrbitCameraExtPlugin {
         app
             // Register observers for component lifecycle events
             .add_observer(on_camera_move_list_added)
-            .add_observer(restore_smoothness_on_move_end)
+            .add_observer(restore_camera_state)
             // Register observers for custom events
             .add_observer(on_zoom_to_fit)
             .add_observer(on_play_animation)

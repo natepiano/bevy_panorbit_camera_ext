@@ -11,8 +11,9 @@ use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
 use crate::components::AnimationConflictPolicy;
 use crate::components::AnimationSourceMarker;
+use crate::components::CameraInputInterruptBehavior;
 use crate::components::CurrentFitTarget;
-use crate::components::SmoothnessStash;
+use crate::components::PanOrbitCameraStash;
 use crate::components::ZoomAnimationMarker;
 use crate::events::AnimateToFit;
 use crate::events::AnimationBegin;
@@ -27,22 +28,24 @@ use crate::events::ZoomCancelled;
 use crate::events::ZoomContext;
 use crate::events::ZoomEnd;
 use crate::events::ZoomToFit;
-use crate::fit::calculate_fit;
 use crate::fit::FitSolution;
+use crate::fit::calculate_fit;
 use crate::support::extract_mesh_vertices;
 
-/// Ensures camera smoothness is stashed once and disabled while animations are active.
-fn ensure_animation_smoothness(
+/// Ensures camera runtime state is stashed once and animation overrides are applied.
+fn stash_camera_state(
     commands: &mut Commands,
     entity: Entity,
     camera: &mut PanOrbitCamera,
     has_existing_stash: bool,
+    interrupt_behavior: CameraInputInterruptBehavior,
 ) {
     if !has_existing_stash {
-        let stash = SmoothnessStash {
-            zoom:  camera.zoom_smoothness,
-            pan:   camera.pan_smoothness,
-            orbit: camera.orbit_smoothness,
+        let stash = PanOrbitCameraStash {
+            zoom:    camera.zoom_smoothness,
+            pan:     camera.pan_smoothness,
+            orbit:   camera.orbit_smoothness,
+            enabled: camera.enabled,
         };
         commands.entity(entity).insert(stash);
     }
@@ -50,6 +53,10 @@ fn ensure_animation_smoothness(
     camera.zoom_smoothness = 0.0;
     camera.pan_smoothness = 0.0;
     camera.orbit_smoothness = 0.0;
+
+    if interrupt_behavior == CameraInputInterruptBehavior::Ignore {
+        camera.enabled = false;
+    }
 }
 
 /// Shared fit preparation used by both ZoomToFit and AnimateToFit observers.
@@ -228,7 +235,8 @@ pub fn on_play_animation(
     mut commands: Commands,
     mut camera_query: Query<(
         &mut PanOrbitCamera,
-        Option<&SmoothnessStash>,
+        Option<&PanOrbitCameraStash>,
+        Option<&CameraInputInterruptBehavior>,
         Option<&AnimationConflictPolicy>,
     )>,
     move_list_query: Query<&CameraMoveList>,
@@ -243,10 +251,13 @@ pub fn on_play_animation(
         start.source
     };
 
-    let Ok((mut camera, existing_stash, conflict_policy)) = camera_query.get_mut(entity) else {
+    let Ok((mut camera, existing_stash, interrupt_behavior, conflict_policy)) =
+        camera_query.get_mut(entity)
+    else {
         return;
     };
 
+    let interrupt_behavior = interrupt_behavior.copied().unwrap_or_default();
     let policy = conflict_policy.copied().unwrap_or_default();
     let has_in_flight = move_list_query.get(entity).is_ok();
 
@@ -308,7 +319,13 @@ pub fn on_play_animation(
         source,
     });
 
-    ensure_animation_smoothness(&mut commands, entity, &mut camera, existing_stash.is_some());
+    stash_camera_state(
+        &mut commands,
+        entity,
+        &mut camera,
+        existing_stash.is_some(),
+        interrupt_behavior,
+    );
 
     commands
         .entity(entity)
@@ -319,18 +336,29 @@ pub fn on_play_animation(
 }
 
 /// Observer for direct `CameraMoveList` insertion (bypassing `PlayAnimation`).
-/// Reuses the same smoothness behavior as the event-driven path.
+/// Reuses the same camera-state stashing behavior as the event-driven path.
 pub fn on_camera_move_list_added(
     add: On<Add, CameraMoveList>,
     mut commands: Commands,
-    mut camera_query: Query<(&mut PanOrbitCamera, Option<&SmoothnessStash>)>,
+    mut camera_query: Query<(
+        &mut PanOrbitCamera,
+        Option<&PanOrbitCameraStash>,
+        Option<&CameraInputInterruptBehavior>,
+    )>,
 ) {
     let entity = add.entity;
-    let Ok((mut camera, existing_stash)) = camera_query.get_mut(entity) else {
+    let Ok((mut camera, existing_stash, interrupt_behavior)) = camera_query.get_mut(entity) else {
         return;
     };
+    let interrupt_behavior = interrupt_behavior.copied().unwrap_or_default();
 
-    ensure_animation_smoothness(&mut commands, entity, &mut camera, existing_stash.is_some());
+    stash_camera_state(
+        &mut commands,
+        entity,
+        &mut camera,
+        existing_stash.is_some(),
+        interrupt_behavior,
+    );
 }
 
 /// Observer for `SetFitTarget` event - sets the target entity for fit visualization
@@ -409,11 +437,11 @@ pub fn on_animate_to_fit(
     commands.trigger(SetFitTarget::new(camera, target));
 }
 
-/// Observer that restores smoothness when `CameraMoveList` is removed
-pub fn restore_smoothness_on_move_end(
+/// Observer that restores camera runtime state when `CameraMoveList` is removed.
+pub fn restore_camera_state(
     remove: On<Remove, CameraMoveList>,
     mut commands: Commands,
-    mut query: Query<(&SmoothnessStash, &mut PanOrbitCamera)>,
+    mut query: Query<(&PanOrbitCameraStash, &mut PanOrbitCamera)>,
 ) {
     let entity = remove.entity;
 
@@ -424,6 +452,7 @@ pub fn restore_smoothness_on_move_end(
     camera.zoom_smoothness = stash.zoom;
     camera.pan_smoothness = stash.pan;
     camera.orbit_smoothness = stash.orbit;
+    camera.enabled = stash.enabled;
 
-    commands.entity(entity).remove::<SmoothnessStash>();
+    commands.entity(entity).remove::<PanOrbitCameraStash>();
 }

@@ -2,13 +2,13 @@ use bevy::prelude::*;
 
 use super::convex_hull::convex_hull_2d;
 use super::convex_hull::project_vertices_to_2d;
+use super::labels::BoundsLabel;
+use super::labels::MarginLabel;
+use super::labels::MarginLabelParams;
 use super::labels::bounds_label_position;
 use super::labels::calculate_label_pixel_position;
 use super::labels::update_or_create_bounds_label;
 use super::labels::update_or_create_margin_label;
-use super::labels::BoundsLabel;
-use super::labels::MarginLabel;
-use super::labels::MarginLabelParams;
 use super::screen_space::boundary_edge_center;
 use super::screen_space::is_horizontally_balanced;
 use super::screen_space::is_vertically_balanced;
@@ -22,10 +22,10 @@ use super::types::FitTargetVisualizationConfig;
 use crate::components::CurrentFitTarget;
 use crate::components::FitVisualization;
 use crate::fit::Edge;
-use crate::support::extract_mesh_vertices;
-use crate::support::projection_aspect_ratio;
 use crate::support::CameraBasis;
 use crate::support::ScreenSpaceBounds;
+use crate::support::extract_mesh_vertices;
+use crate::support::projection_aspect_ratio;
 
 /// Calculates the color for an edge based on balance state.
 const fn calculate_edge_color(
@@ -246,7 +246,7 @@ pub fn draw_fit_target_bounds(
             continue;
         };
 
-        let avg_depth = depths.avg_depth();
+        let avg_depth = depths.depth_sum / depths.point_count as f32;
         let is_ortho = matches!(projection, Projection::Orthographic(_));
         let viewport_size = cam.logical_viewport_size();
 

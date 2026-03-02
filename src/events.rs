@@ -71,7 +71,13 @@
 //!
 //! When the user physically moves the camera during an animation:
 //!
-//! - **`Cancel`** (default) — stops where it is:
+//! - **`Ignore`** (default) — temporarily disables camera input and continues animating:
+//!
+//!   ```text
+//!   … (no interrupt lifecycle event)
+//!   ```
+//!
+//! - **`Cancel`** — stops where it is:
 //!
 //!   ```text
 //!   … → AnimationCancelled → ZoomCancelled (if zoom)
@@ -264,6 +270,9 @@ pub struct ZoomEnd {
 ///   [`AnimationConflictPolicy::LastWins`](crate::AnimationConflictPolicy::LastWins) is active,
 ///   cancelling the in-flight zoom.
 ///
+/// When user input behavior is `Ignore` or `Complete`, user input does not emit
+/// `ZoomCancelled`.
+///
 /// - `camera` — the camera whose zoom was cancelled.
 /// - `target` — the entity that was being framed.
 /// - `margin` — the margin value from the triggering [`ZoomToFit`].
@@ -371,6 +380,9 @@ pub struct AnimationEnd {
 /// - **Animation conflict** — a new animation request arrives while
 ///   [`AnimationConflictPolicy::LastWins`](crate::AnimationConflictPolicy::LastWins) is active,
 ///   cancelling the in-flight (non-zoom) animation.
+///
+/// When user input behavior is `Ignore` or `Complete`, user input does not emit
+/// `AnimationCancelled`.
 ///
 /// - `camera` — the camera whose animation was cancelled.
 /// - `source` — whether this animation originated from [`PlayAnimation`], [`ZoomToFit`], or

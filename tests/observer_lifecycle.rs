@@ -332,6 +332,7 @@ fn interrupt_cancel_emits_cancelled_and_restores_smoothness_without_jumping_to_f
     assert_eq!(camera.zoom_smoothness, 0.25);
     assert_eq!(camera.pan_smoothness, 0.5);
     assert_eq!(camera.orbit_smoothness, 0.75);
+    assert!(camera.enabled);
     assert_eq!(camera.target_focus, sentinel_focus);
     assert_eq!(camera.target_yaw, sentinel_yaw);
     assert_eq!(camera.target_pitch, sentinel_pitch);
@@ -406,6 +407,7 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
     assert_eq!(camera.zoom_smoothness, 0.15);
     assert_eq!(camera.pan_smoothness, 0.35);
     assert_eq!(camera.orbit_smoothness, 0.55);
+    assert!(camera.enabled);
     match final_move {
         CameraMove::ToOrbit {
             focus,
@@ -421,6 +423,135 @@ fn interrupt_complete_emits_end_jumps_to_final_and_restores_smoothness() {
         },
         CameraMove::ToPosition { .. } => unreachable!("test uses ToOrbit final move"),
     }
+}
+
+#[test]
+fn interrupt_ignore_keeps_animation_running_and_emits_no_interrupt_events() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera = app
+        .world_mut()
+        .spawn((
+            PanOrbitCamera::default(),
+            CameraInputInterruptBehavior::Ignore,
+        ))
+        .id();
+
+    app.world_mut().trigger(PlayAnimation::new(
+        camera,
+        VecDeque::from([make_move(Duration::from_millis(5000))]),
+    ));
+    app.update();
+
+    // Isolate interrupt behavior events.
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    let sentinel_focus = Vec3::new(999.0, 888.0, 777.0);
+    let sentinel_yaw = 1.25;
+    let sentinel_pitch = -0.75;
+    let sentinel_radius = 12.5;
+    {
+        let mut camera = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera)
+            .expect("camera should exist");
+        camera.target_focus = sentinel_focus;
+        camera.target_yaw = sentinel_yaw;
+        camera.target_pitch = sentinel_pitch;
+        camera.target_radius = sentinel_radius;
+    }
+
+    app.update();
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(log.0, Vec::<LifecycleEvent>::new());
+    assert!(app.world().get::<CameraMoveList>(camera).is_some());
+
+    let camera = app
+        .world()
+        .get::<PanOrbitCamera>(camera)
+        .expect("camera should exist");
+    assert!(!camera.enabled);
+    assert_ne!(camera.target_focus, sentinel_focus);
+    assert_ne!(camera.target_yaw, sentinel_yaw);
+    assert_ne!(camera.target_pitch, sentinel_pitch);
+    assert_ne!(camera.target_radius, sentinel_radius);
+}
+
+#[test]
+fn interrupt_default_is_ignore() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    // No CameraInputInterruptBehavior component inserted — should default to Ignore.
+    let camera = app.world_mut().spawn(PanOrbitCamera::default()).id();
+
+    app.world_mut().trigger(PlayAnimation::new(
+        camera,
+        VecDeque::from([make_move(Duration::from_millis(5000))]),
+    ));
+    app.update();
+    app.world_mut().resource_mut::<EventLog>().0.clear();
+
+    let camera_before_interrupt = app
+        .world()
+        .get::<PanOrbitCamera>(camera)
+        .expect("camera should exist");
+    assert!(!camera_before_interrupt.enabled);
+
+    {
+        let mut camera = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera)
+            .expect("camera should exist");
+        camera.target_focus = Vec3::new(50.0, 60.0, 70.0);
+    }
+
+    app.update();
+
+    let log = app.world().resource::<EventLog>();
+    assert_eq!(log.0, Vec::<LifecycleEvent>::new());
+    assert!(app.world().get::<CameraMoveList>(camera).is_some());
+}
+
+#[test]
+fn interrupt_ignore_restores_original_enabled_state_after_completion() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(PanOrbitCameraExtPlugin);
+    add_lifecycle_log_observers(&mut app);
+
+    let camera = PanOrbitCamera {
+        enabled: false,
+        ..default()
+    };
+    let camera = app
+        .world_mut()
+        .spawn((camera, CameraInputInterruptBehavior::Ignore))
+        .id();
+
+    app.world_mut().trigger(PlayAnimation::new(
+        camera,
+        VecDeque::from([make_move(Duration::ZERO)]),
+    ));
+
+    // Start animation and stash state.
+    app.update();
+    // Drain queue and remove CameraMoveList, triggering restore.
+    app.update();
+    app.update();
+
+    let camera = app
+        .world()
+        .get::<PanOrbitCamera>(camera)
+        .expect("camera should exist");
+    assert!(!camera.enabled);
 }
 
 #[test]

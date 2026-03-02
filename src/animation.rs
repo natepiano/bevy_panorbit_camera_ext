@@ -124,7 +124,8 @@ enum MoveState {
         start_radius:        f32,
         start_yaw:           f32,
         /// Values written by the animation last frame — if the camera's current
-        /// values differ, external input occurred and the animation should cancel.
+        /// values differ, external input occurred and the animation may interrupt
+        /// depending on `CameraInputInterruptBehavior`.
         last_written_focus:  Vec3,
         last_written_yaw:    f32,
         last_written_pitch:  f32,
@@ -168,7 +169,7 @@ impl MoveState {
 /// when the queue is empty.
 ///
 /// Camera smoothing is automatically disabled while camera_moves are in progress and
-/// restored when the queue completes via the `restore_smoothness_on_move_end` observer.
+/// restored when the queue completes via the `restore_camera_state` observer.
 #[derive(Component, Reflect, Default)]
 #[require(crate::components::CameraInputInterruptBehavior)]
 #[reflect(Component, Default)]
@@ -243,9 +244,10 @@ fn handle_empty_queue(
     }
 }
 
-/// Handles external camera input interrupting the animation via Cancel or Complete.
+/// Handles external camera input according to `CameraInputInterruptBehavior`.
+/// Returns the concrete handling outcome for this frame.
 #[allow(clippy::too_many_arguments)]
-fn handle_interrupt(
+fn handle_camera_input_interrupt(
     commands: &mut Commands,
     entity: Entity,
     pan_orbit: &mut PanOrbitCamera,
@@ -254,8 +256,9 @@ fn handle_interrupt(
     source: AnimationSource,
     current_move: &CameraMove,
     zoom_marker: Option<&ZoomAnimationMarker>,
-) {
+) -> CameraInputInterruptBehavior {
     match interrupt_behavior {
+        CameraInputInterruptBehavior::Ignore => CameraInputInterruptBehavior::Ignore,
         CameraInputInterruptBehavior::Cancel => {
             // Stop where we are — fire cancelled events
             commands
@@ -276,6 +279,7 @@ fn handle_interrupt(
                     easing:   marker.0.easing,
                 });
             }
+            CameraInputInterruptBehavior::Cancel
         },
         CameraInputInterruptBehavior::Complete => {
             // Jump to the final position of the entire queue
@@ -305,6 +309,7 @@ fn handle_interrupt(
                     easing:   marker.0.easing,
                 });
             }
+            CameraInputInterruptBehavior::Complete
         },
     }
 }
@@ -477,7 +482,7 @@ pub fn process_camera_move_list(
         };
 
         if queue.state.externally_modified(&pan_orbit) {
-            handle_interrupt(
+            let outcome = handle_camera_input_interrupt(
                 &mut commands,
                 entity,
                 &mut pan_orbit,
@@ -487,7 +492,12 @@ pub fn process_camera_move_list(
                 &current_move,
                 zoom_marker,
             );
-            continue;
+            match outcome {
+                CameraInputInterruptBehavior::Ignore => {},
+                CameraInputInterruptBehavior::Cancel | CameraInputInterruptBehavior::Complete => {
+                    continue;
+                },
+            }
         }
 
         match &queue.state {

@@ -29,11 +29,11 @@ use bevy_panorbit_camera_ext::AnimationConflictPolicy;
 use bevy_panorbit_camera_ext::AnimationEnd;
 use bevy_panorbit_camera_ext::AnimationRejected;
 use bevy_panorbit_camera_ext::AnimationSource;
+use bevy_panorbit_camera_ext::CameraInputInterruptBehavior;
 use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
 use bevy_panorbit_camera_ext::FitVisualization;
-use bevy_panorbit_camera_ext::CameraInputInterruptBehavior;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::ZoomBegin;
@@ -62,7 +62,6 @@ const EVENT_LOG_SCROLL_SPEED: f32 = 120.0;
 const EVENT_LOG_SEPARATOR: &str = "- - - - - - - - - - - -";
 const EVENT_LOG_WIDTH: f32 = 300.0;
 const UI_FONT_SIZE: f32 = 13.0;
-
 
 // mesh settings
 const GIZMO_DEPTH_BIAS: f32 = -0.005;
@@ -406,7 +405,9 @@ fn setup(
 
     // Interrupt behavior hint (bottom-left)
     commands.spawn((
-        Text::new(interrupt_behavior_hint_text(CameraInputInterruptBehavior::Cancel)),
+        Text::new(interrupt_behavior_hint_text(
+            CameraInputInterruptBehavior::Ignore,
+        )),
         TextFont {
             font_size: UI_FONT_SIZE,
             ..default()
@@ -1111,6 +1112,9 @@ fn toggle_projection(
 
 fn interrupt_behavior_hint_text(behavior: CameraInputInterruptBehavior) -> String {
     match behavior {
+        CameraInputInterruptBehavior::Ignore => {
+            "CameraInputInterruptBehavior::Ignore - camera input during animation is ignored".into()
+        },
         CameraInputInterruptBehavior::Cancel => {
             "CameraInputInterruptBehavior::Cancel - camera input during animation will cancel it".into()
         },
@@ -1137,10 +1141,11 @@ fn toggle_interrupt_behavior(
     // Determine what the new behavior should be based on the primary camera
     let new_behavior = match behavior_query.get(scene.camera) {
         Ok(behavior) => match *behavior {
+            CameraInputInterruptBehavior::Ignore => CameraInputInterruptBehavior::Cancel,
             CameraInputInterruptBehavior::Cancel => CameraInputInterruptBehavior::Complete,
-            CameraInputInterruptBehavior::Complete => CameraInputInterruptBehavior::Cancel,
+            CameraInputInterruptBehavior::Complete => CameraInputInterruptBehavior::Ignore,
         },
-        Err(_) => CameraInputInterruptBehavior::Complete,
+        Err(_) => CameraInputInterruptBehavior::Ignore,
     };
 
     for cam in all_cameras(&scene, second.as_deref()) {

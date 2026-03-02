@@ -100,7 +100,8 @@ one is already playing:
 **`CameraInputInterruptBehavior`** — what happens when the user physically moves the camera
 during an animation:
 
-- `Cancel` (default) — stop the animation at its current position
+- `Ignore` (default) — temporarily disable camera input and keep animating (no interrupt event)
+- `Cancel` — stop the animation at its current position
 - `Complete` — jump to the final position of the animation
 
 These are orthogonal — `AnimationConflictPolicy` guards against programmatic conflicts,
