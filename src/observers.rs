@@ -230,6 +230,7 @@ fn begin_zoom_if_needed(
 /// This is the single decision point for all trigger-time logic: conflict
 /// resolution, zoom lifecycle (`ZoomBegin` / `ZoomAnimationMarker`), and
 /// animation begin.
+#[allow(clippy::type_complexity)]
 pub fn on_play_animation(
     start: On<PlayAnimation>,
     mut commands: Commands,
