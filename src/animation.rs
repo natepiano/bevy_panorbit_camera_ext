@@ -95,19 +95,22 @@ impl CameraMove {
         match self {
             Self::ToPosition {
                 translation, focus, ..
-            } => {
-                let offset = *translation - *focus;
-                let radius = offset.length();
-                let yaw = offset.x.atan2(offset.z);
-                let horizontal_dist = offset.x.hypot(offset.z);
-                let pitch = offset.y.atan2(horizontal_dist);
-                (yaw, pitch, radius)
-            },
+            } => orbital_params_from_offset(*translation - *focus),
             Self::ToOrbit {
                 yaw, pitch, radius, ..
             } => (*yaw, *pitch, *radius),
         }
     }
+}
+
+/// Decomposes an offset vector (camera position minus focus) into orbital parameters.
+/// Returns `(yaw, pitch, radius)`. May lose yaw information at ±PI/2 pitch due to `atan2`.
+pub fn orbital_params_from_offset(offset: Vec3) -> (f32, f32, f32) {
+    let radius = offset.length();
+    let yaw = offset.x.atan2(offset.z);
+    let horizontal_dist = offset.x.hypot(offset.z);
+    let pitch = offset.y.atan2(horizontal_dist);
+    (yaw, pitch, radius)
 }
 
 /// Tolerance for detecting external camera input during animations.

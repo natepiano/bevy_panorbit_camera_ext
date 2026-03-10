@@ -5,10 +5,16 @@ edition = "2024"
 
 [features]
 default = []
-visualization = []
+visualization = ["bevy/bevy_gizmos", "bevy/bevy_text", "bevy/bevy_ui"]
 
 [dependencies]
-bevy = "0.18.0"
+bevy = { version = "0.18.1", default-features = false, features = [
+  "bevy_asset",
+  "bevy_camera",
+  "bevy_log",
+  "bevy_mesh",
+  "bevy_window",
+] }
 bevy_panorbit_camera = "0.34.0"
 
 [[example]]
@@ -16,5 +22,5 @@ name = "extras"
 
 [dev-dependencies]
 bevy_panorbit_camera_ext = { path = ".", features = ["visualization"] }
-bevy_brp_extras = "0.18.6"
+bevy_brp_extras = "0.18.7"
 bevy_window_manager = "0.18.2"

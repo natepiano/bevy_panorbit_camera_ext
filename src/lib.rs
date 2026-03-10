@@ -39,6 +39,8 @@ pub use events::AnimationRejected;
 pub use events::AnimationSource;
 pub use events::CameraMoveBegin;
 pub use events::CameraMoveEnd;
+pub use events::LookAt;
+pub use events::LookAtAndZoomToFit;
 pub use events::PlayAnimation;
 pub use events::SetFitTarget;
 pub use events::ZoomBegin;
@@ -48,6 +50,8 @@ pub use events::ZoomEnd;
 pub use events::ZoomToFit;
 use observers::on_animate_to_fit;
 use observers::on_camera_move_list_added;
+use observers::on_look_at;
+use observers::on_look_at_and_zoom_to_fit;
 use observers::on_play_animation;
 use observers::on_set_fit_target;
 use observers::on_zoom_to_fit;
@@ -70,6 +74,8 @@ impl Plugin for PanOrbitCameraExtPlugin {
             .add_observer(on_play_animation)
             .add_observer(on_set_fit_target)
             .add_observer(on_animate_to_fit)
+            .add_observer(on_look_at)
+            .add_observer(on_look_at_and_zoom_to_fit)
             // Add systems
             .add_systems(Update, process_camera_move_list);
 

@@ -161,9 +161,29 @@ pub enum AnimationSource {
     ZoomToFit,
     /// Animation was triggered by [`AnimateToFit`].
     AnimateToFit,
+    /// Animation was triggered by [`LookAt`].
+    LookAt,
+    /// Animation was triggered by [`LookAtAndZoomToFit`].
+    LookAtAndZoomToFit,
 }
 
-/// `ZoomToFit` — frames a target entity in the camera view without changing the camera angle.
+/// `ZoomToFit` — frames a target entity in the camera view without changing the
+/// camera's viewing angle.
+///
+/// The camera's yaw and pitch stay fixed. Only the focus and radius change so
+/// that the target fills the viewport with the requested margin. Because the
+/// viewing angle is preserved, the camera *translates* to a new position rather
+/// than rotating — if the target is off to the side, the view slides over to it.
+///
+/// # See also
+///
+/// - [`LookAt`] — keeps the camera in place and *rotates* to face the target (no framing / radius
+///   adjustment).
+/// - [`LookAtAndZoomToFit`] — *rotates* to face the target and adjusts radius to frame it. Use this
+///   when you want the camera to turn toward the target instead of sliding.
+/// - [`AnimateToFit`] — frames the target from a caller-specified viewing angle.
+///
+/// # Fields
 ///
 /// - `camera` — the entity with a `PanOrbitCamera` component.
 /// - `target` — the entity to frame; must have a `Mesh3d` (direct or on descendants).
@@ -437,8 +457,21 @@ pub struct CameraMoveEnd {
     pub camera_move: CameraMove,
 }
 
-/// `AnimateToFit` — animates the camera to a specific orientation while framing a target
-/// entity in view.
+/// `AnimateToFit` — animates the camera to a caller-specified orientation while
+/// framing a target entity in view.
+///
+/// You specify the exact yaw and pitch the camera should end up at, and the
+/// system computes the radius needed to frame the target from that angle.
+///
+/// # See also
+///
+/// - [`LookAtAndZoomToFit`] — like `AnimateToFit` but the yaw/pitch are automatically back-solved
+///   from the camera's current position, so you don't specify them. Use this for a "turn and frame"
+///   operation.
+/// - [`ZoomToFit`] — keeps the current viewing angle, only adjusts focus and radius.
+/// - [`LookAt`] — rotates to face the target without framing.
+///
+/// # Fields
 ///
 /// - `camera` — the entity with a `PanOrbitCamera` component.
 /// - `target` — the entity to frame; must have a `Mesh3d` (direct or on descendants).
@@ -487,6 +520,146 @@ impl AnimateToFit {
     pub const fn pitch(mut self, pitch: f32) -> Self {
         self.pitch = pitch;
         self
+    }
+
+    pub const fn margin(mut self, margin: f32) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    pub const fn duration(mut self, duration: Duration) -> Self {
+        self.duration = duration;
+        self
+    }
+
+    pub const fn easing(mut self, easing: EaseFunction) -> Self {
+        self.easing = easing;
+        self
+    }
+}
+
+/// `LookAt` — rotates the camera in place to face a target entity.
+///
+/// The camera stays at its current world position and turns to look at the target,
+/// like a person turning their head. The orbit pivot re-anchors to the target
+/// entity's [`GlobalTransform`] translation, and yaw/pitch/radius are back-solved
+/// so the camera does not move — only its orientation changes.
+///
+/// This differs from [`ZoomToFit`], which keeps the camera's viewing angle fixed
+/// and slides the focus to the target (the camera *moves* but doesn't *rotate*).
+/// `LookAt` does the opposite: the camera *rotates* but doesn't *move*.
+///
+/// Only requires the target to have a [`GlobalTransform`] — no mesh needed.
+///
+/// # See also
+///
+/// - [`LookAtAndZoomToFit`] — same rotation, but also adjusts radius to frame the target in view.
+/// - [`ZoomToFit`] — keeps the viewing angle, moves the camera to frame the target.
+/// - [`AnimateToFit`] — like [`LookAtAndZoomToFit`] but with caller-specified yaw/pitch instead of
+///   back-solving from the current position.
+///
+/// # Fields
+///
+/// - `camera` — the entity with a `PanOrbitCamera` component.
+/// - `target` — the entity to look at; must have a [`GlobalTransform`].
+/// - `duration` — see module-level docs on **Duration**.
+/// - `easing` — see module-level docs on **Easing**.
+///
+/// Animated paths route through [`PlayAnimation`] using [`CameraMove::ToPosition`],
+/// so the full event sequence is `AnimationBegin` → `CameraMoveBegin` →
+/// `CameraMoveEnd` → `AnimationEnd` with `source: AnimationSource::LookAt`.
+#[derive(EntityEvent, Reflect)]
+#[reflect(Event, FromReflect)]
+pub struct LookAt {
+    #[event_target]
+    pub camera:   Entity,
+    pub target:   Entity,
+    pub duration: Duration,
+    pub easing:   EaseFunction,
+}
+
+impl LookAt {
+    pub const fn new(camera: Entity, target: Entity) -> Self {
+        Self {
+            camera,
+            target,
+            duration: Duration::ZERO,
+            easing: EaseFunction::CubicOut,
+        }
+    }
+
+    pub const fn duration(mut self, duration: Duration) -> Self {
+        self.duration = duration;
+        self
+    }
+
+    pub const fn easing(mut self, easing: EaseFunction) -> Self {
+        self.easing = easing;
+        self
+    }
+}
+
+/// `LookAtAndZoomToFit` — rotates the camera to face a target entity and adjusts
+/// the radius to frame it in view, all in one fluid motion.
+///
+/// Combines [`LookAt`] (turn in place) with [`ZoomToFit`] (frame the target).
+/// The yaw and pitch are back-solved from the camera's current world position
+/// relative to the target's bounds center — you don't specify them.
+///
+/// # How it differs from [`ZoomToFit`]
+///
+/// [`ZoomToFit`] preserves the camera's current viewing angle (yaw/pitch) and
+/// slides the orbit focus to the target. If the target is off to the side, the
+/// camera *translates* to keep the same angle — it doesn't turn to face it.
+///
+/// `LookAtAndZoomToFit` instead *rotates* the camera toward the target from its
+/// current position, then adjusts the radius to frame it. The difference is most
+/// visible when the target is near the edge of the viewport: `ZoomToFit` slides
+/// the view sideways while `LookAtAndZoomToFit` turns to face it head-on.
+///
+/// # How it differs from [`AnimateToFit`]
+///
+/// [`AnimateToFit`] requires you to specify the final yaw and pitch explicitly.
+/// `LookAtAndZoomToFit` computes them automatically from the camera's current
+/// world position, making it a "turn and frame" operation with no angle to specify.
+///
+/// # See also
+///
+/// - [`LookAt`] — same rotation without the zoom-to-fit radius adjustment.
+/// - [`ZoomToFit`] — keeps the viewing angle, moves the camera to frame the target.
+/// - [`AnimateToFit`] — frames the target from a caller-specified viewing angle.
+///
+/// # Fields
+///
+/// - `camera` — the entity with a `PanOrbitCamera` component.
+/// - `target` — the entity to frame; must have a `Mesh3d` (direct or on descendants).
+/// - `margin` — see [`ZoomToFit`] for details on how margin is applied.
+/// - `duration` — see module-level docs on **Duration**.
+/// - `easing` — see module-level docs on **Easing**.
+///
+/// Animated paths route through [`PlayAnimation`] using [`CameraMove::ToOrbit`],
+/// so the full event sequence is `AnimationBegin` → `CameraMoveBegin` →
+/// `CameraMoveEnd` → `AnimationEnd` with `source: AnimationSource::LookAtAndZoomToFit`.
+#[derive(EntityEvent, Reflect)]
+#[reflect(Event, FromReflect)]
+pub struct LookAtAndZoomToFit {
+    #[event_target]
+    pub camera:   Entity,
+    pub target:   Entity,
+    pub margin:   f32,
+    pub duration: Duration,
+    pub easing:   EaseFunction,
+}
+
+impl LookAtAndZoomToFit {
+    pub const fn new(camera: Entity, target: Entity) -> Self {
+        Self {
+            camera,
+            target,
+            margin: 0.1,
+            duration: Duration::ZERO,
+            easing: EaseFunction::CubicOut,
+        }
     }
 
     pub const fn margin(mut self, margin: f32) -> Self {

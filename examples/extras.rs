@@ -13,6 +13,7 @@ use bevy::camera::RenderTarget;
 use bevy::camera::ScalingMode;
 use bevy::camera::visibility::RenderLayers;
 use bevy::color::palettes::css::DEEP_SKY_BLUE;
+use bevy::color::palettes::css::ORANGE;
 use bevy::math::curve::easing::EaseFunction;
 use bevy::prelude::*;
 use bevy::time::Virtual;
@@ -34,6 +35,8 @@ use bevy_panorbit_camera_ext::CameraMove;
 use bevy_panorbit_camera_ext::CameraMoveBegin;
 use bevy_panorbit_camera_ext::CameraMoveEnd;
 use bevy_panorbit_camera_ext::FitVisualization;
+use bevy_panorbit_camera_ext::LookAt;
+use bevy_panorbit_camera_ext::LookAtAndZoomToFit;
 use bevy_panorbit_camera_ext::PanOrbitCameraExtPlugin;
 use bevy_panorbit_camera_ext::PlayAnimation;
 use bevy_panorbit_camera_ext::ZoomBegin;
@@ -45,6 +48,7 @@ use bevy_window_manager::WindowManagerPlugin;
 // durations
 const ANIMATE_FIT_DURATION_MS: u64 = 1200;
 const ORBIT_MOVE_DURATION_MS: u64 = 800;
+const LOOK_AT_DURATION_MS: u64 = 800;
 const ZOOM_DURATION_MS: u64 = 1000;
 
 // camera home
@@ -186,6 +190,10 @@ struct SecondWindowCamera;
 #[derive(Component)]
 struct WindowLabel(Timer);
 
+/// Tracks the mesh entity currently under the cursor for `LookAt` / `LookAtAndZoomToFit`.
+#[derive(Resource, Default)]
+struct HoveredEntity(Option<Entity>);
+
 /// Marker resource: when present, the next `AnimationEnd` enables the event log.
 #[derive(Resource)]
 struct EnableLogOnAnimationEnd;
@@ -225,6 +233,7 @@ fn main() {
         .init_state::<AppState>()
         .init_resource::<ActiveEasing>()
         .init_resource::<EventLog>()
+        .init_resource::<HoveredEntity>()
         .add_systems(Startup, (setup, init_selection_gizmo))
         .add_systems(
             Update,
@@ -239,6 +248,7 @@ fn main() {
                 toggle_pause,
                 toggle_event_log,
                 draw_selection_gizmo,
+                draw_hover_gizmo,
                 sync_selection_gizmo_layers,
                 update_event_log_text,
                 scroll_event_log,
@@ -251,6 +261,8 @@ fn main() {
                     animate_fit_to_scene,
                     toggle_interrupt_behavior,
                     toggle_animation_conflict_policy,
+                    look_at_hovered,
+                    look_at_and_zoom_to_fit_hovered,
                 )
                     .run_if(not_paused),
             ),
@@ -333,7 +345,9 @@ fn setup(
             MeshShape::Cuboid(cuboid_size),
         ))
         .observe(on_mesh_clicked)
-        .observe(on_mesh_dragged);
+        .observe(on_mesh_dragged)
+        .observe(on_mesh_hover)
+        .observe(on_mesh_unhover);
 
     // Sphere
     let sphere_radius = 0.5;
@@ -345,7 +359,9 @@ fn setup(
             MeshShape::Sphere(sphere_radius),
         ))
         .observe(on_mesh_clicked)
-        .observe(on_mesh_dragged);
+        .observe(on_mesh_dragged)
+        .observe(on_mesh_hover)
+        .observe(on_mesh_unhover);
 
     // Torus
     let torus_minor = 0.25;
@@ -368,7 +384,9 @@ fn setup(
             },
         ))
         .observe(on_mesh_clicked)
-        .observe(on_mesh_dragged);
+        .observe(on_mesh_dragged)
+        .observe(on_mesh_hover)
+        .observe(on_mesh_unhover);
 
     // Camera (middle-click orbit, shift+middle pan, trackpad support)
     let camera = commands
@@ -389,7 +407,7 @@ fn setup(
 
     // Instructions
     commands.spawn((
-        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'H' Home w/animate fit to scene\n'A' animate camera\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy\n'W' toggle second window"),
+        Text::new("Click a mesh to zoom-to-fit\nClick the ground to zoom back out\n\nPress:\n'Esc' pause / unpause\n'P' toggle projection\n'D' debug visualization\n'H' Home w/animate fit to scene\n'A' animate camera\n'F' look at hovered mesh\n'G' look at + zoom-to-fit hovered mesh\n'R' randomize easing\n'E' reset to 'CubicOut' easing\n'I' toggle interrupt behavior\n'Q' cycle conflict policy\n'W' toggle second window"),
         TextFont {
             font_size: UI_FONT_SIZE,
             ..default()
@@ -834,9 +852,95 @@ fn on_mesh_dragged(
     }
 }
 
+fn on_mesh_hover(hover: On<Pointer<Over>>, mut hovered: ResMut<HoveredEntity>) {
+    hovered.0 = Some(hover.entity);
+}
+
+fn on_mesh_unhover(hover: On<Pointer<Out>>, mut hovered: ResMut<HoveredEntity>) {
+    if hovered.0 == Some(hover.entity) {
+        hovered.0 = None;
+    }
+}
+
+fn look_at_hovered(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    hovered: Res<HoveredEntity>,
+    scene: Res<SceneEntities>,
+    active_easing: Res<ActiveEasing>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyF) {
+        return;
+    }
+    let Some(target) = hovered.0 else {
+        return;
+    };
+    commands.trigger(
+        LookAt::new(scene.camera, target)
+            .duration(Duration::from_millis(LOOK_AT_DURATION_MS))
+            .easing(active_easing.0),
+    );
+}
+
+fn look_at_and_zoom_to_fit_hovered(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    hovered: Res<HoveredEntity>,
+    scene: Res<SceneEntities>,
+    active_easing: Res<ActiveEasing>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyG) {
+        return;
+    }
+    let Some(target) = hovered.0 else {
+        return;
+    };
+    commands.trigger(
+        LookAtAndZoomToFit::new(scene.camera, target)
+            .margin(ZOOM_MARGIN_MESH)
+            .duration(Duration::from_millis(LOOK_AT_DURATION_MS))
+            .easing(active_easing.0),
+    );
+}
+
 // ============================================================================
 // Selection gizmo
 // ============================================================================
+
+fn draw_shape_gizmo(
+    gizmos: &mut Gizmos<SelectionGizmo>,
+    transform: &Transform,
+    shape: &MeshShape,
+    color: Color,
+) {
+    match shape {
+        MeshShape::Cuboid(size) => {
+            gizmos.cube(
+                Transform::from_translation(transform.translation)
+                    .with_rotation(transform.rotation)
+                    .with_scale(*size * GIZMO_SCALE),
+                color,
+            );
+        },
+        MeshShape::Sphere(radius) => {
+            gizmos.sphere(
+                Isometry3d::new(transform.translation, transform.rotation),
+                radius * GIZMO_SCALE,
+                color,
+            );
+        },
+        MeshShape::Torus {
+            minor_radius,
+            major_radius,
+        } => {
+            gizmos.primitive_3d(
+                &Torus::new(*minor_radius * GIZMO_SCALE, *major_radius * GIZMO_SCALE),
+                Isometry3d::new(transform.translation, transform.rotation),
+                color,
+            );
+        },
+    }
+}
 
 fn draw_selection_gizmo(
     mut gizmos: Gizmos<SelectionGizmo>,
@@ -844,34 +948,22 @@ fn draw_selection_gizmo(
 ) {
     let color = Color::from(DEEP_SKY_BLUE);
     for (transform, shape) in &query {
-        match shape {
-            MeshShape::Cuboid(size) => {
-                gizmos.cube(
-                    Transform::from_translation(transform.translation)
-                        .with_rotation(transform.rotation)
-                        .with_scale(*size * GIZMO_SCALE),
-                    color,
-                );
-            },
-            MeshShape::Sphere(radius) => {
-                gizmos.sphere(
-                    Isometry3d::new(transform.translation, transform.rotation),
-                    radius * GIZMO_SCALE,
-                    color,
-                );
-            },
-            MeshShape::Torus {
-                minor_radius,
-                major_radius,
-            } => {
-                gizmos.primitive_3d(
-                    &Torus::new(*minor_radius * GIZMO_SCALE, *major_radius * GIZMO_SCALE),
-                    Isometry3d::new(transform.translation, transform.rotation),
-                    color,
-                );
-            },
-        }
+        draw_shape_gizmo(&mut gizmos, transform, shape, color);
     }
+}
+
+fn draw_hover_gizmo(
+    mut gizmos: Gizmos<SelectionGizmo>,
+    hovered: Res<HoveredEntity>,
+    query: Query<(&Transform, &MeshShape), Without<Selected>>,
+) {
+    let Some(entity) = hovered.0 else {
+        return;
+    };
+    let Ok((transform, shape)) = query.get(entity) else {
+        return;
+    };
+    draw_shape_gizmo(&mut gizmos, transform, shape, Color::from(ORANGE));
 }
 
 type GizmoLayerQuery<'w, 's> = Query<

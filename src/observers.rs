@@ -9,6 +9,7 @@ use bevy_panorbit_camera::PanOrbitCamera;
 
 use crate::animation::CameraMove;
 use crate::animation::CameraMoveList;
+use crate::animation::orbital_params_from_offset;
 use crate::components::AnimationConflictPolicy;
 use crate::components::AnimationSourceMarker;
 use crate::components::CameraInputInterruptBehavior;
@@ -21,6 +22,8 @@ use crate::events::AnimationCancelled;
 use crate::events::AnimationEnd;
 use crate::events::AnimationRejected;
 use crate::events::AnimationSource;
+use crate::events::LookAt;
+use crate::events::LookAtAndZoomToFit;
 use crate::events::PlayAnimation;
 use crate::events::SetFitTarget;
 use crate::events::ZoomBegin;
@@ -31,6 +34,39 @@ use crate::events::ZoomToFit;
 use crate::fit::FitSolution;
 use crate::fit::calculate_fit;
 use crate::support::extract_mesh_vertices;
+
+/// Parameters for an instant orbital snap.
+struct SnapOrbit {
+    focus:  Vec3,
+    yaw:    Option<f32>,
+    pitch:  Option<f32>,
+    radius: f32,
+}
+
+/// Snaps the camera to an orbital position instantly (no animation) and fires
+/// caller-provided lifecycle events via `emit_events`.
+fn snap_to_orbit(
+    commands: &mut Commands,
+    panorbit: &mut PanOrbitCamera,
+    snap: SnapOrbit,
+    emit_events: impl FnOnce(&mut Commands),
+) {
+    panorbit.focus = snap.focus;
+    panorbit.radius = Some(snap.radius);
+    panorbit.target_focus = snap.focus;
+    panorbit.target_radius = snap.radius;
+    if let Some(yaw) = snap.yaw {
+        panorbit.yaw = Some(yaw);
+        panorbit.target_yaw = yaw;
+    }
+    if let Some(pitch) = snap.pitch {
+        panorbit.pitch = Some(pitch);
+        panorbit.target_pitch = pitch;
+    }
+    panorbit.force_update = true;
+
+    emit_events(commands);
+}
 
 /// Ensures camera runtime state is stashed once and animation overrides are applied.
 fn stash_camera_state(
@@ -180,25 +216,32 @@ pub fn on_zoom_to_fit(
         commands.trigger(PlayAnimation::new(camera, camera_moves).zoom_context(ctx));
     } else {
         // Instant path: snap directly to target — no `PlayAnimation` involved.
-        commands.trigger(ZoomBegin {
-            camera,
-            target,
-            margin,
-            duration,
-            easing,
-        });
-        panorbit.focus = fit.focus;
-        panorbit.radius = Some(fit.radius);
-        panorbit.target_focus = fit.focus;
-        panorbit.target_radius = fit.radius;
-        panorbit.force_update = true;
-        commands.trigger(ZoomEnd {
-            camera,
-            target,
-            margin,
-            duration: Duration::ZERO,
-            easing,
-        });
+        snap_to_orbit(
+            &mut commands,
+            &mut panorbit,
+            SnapOrbit {
+                focus:  fit.focus,
+                yaw:    None,
+                pitch:  None,
+                radius: fit.radius,
+            },
+            |commands| {
+                commands.trigger(ZoomBegin {
+                    camera,
+                    target,
+                    margin,
+                    duration,
+                    easing,
+                });
+                commands.trigger(ZoomEnd {
+                    camera,
+                    target,
+                    margin,
+                    duration: Duration::ZERO,
+                    easing,
+                });
+            },
+        );
     }
 
     // Route fit target updates through a single lifecycle owner.
@@ -421,20 +464,172 @@ pub fn on_animate_to_fit(
             PlayAnimation::new(camera, camera_moves).source(AnimationSource::AnimateToFit),
         );
     } else {
-        panorbit.focus = fit.focus;
-        panorbit.yaw = Some(yaw);
-        panorbit.pitch = Some(pitch);
-        panorbit.radius = Some(fit.radius);
-        panorbit.target_focus = fit.focus;
-        panorbit.target_radius = fit.radius;
-        panorbit.target_yaw = yaw;
-        panorbit.target_pitch = pitch;
-        panorbit.force_update = true;
-        let source = AnimationSource::AnimateToFit;
-        commands.trigger(AnimationBegin { camera, source });
-        commands.trigger(AnimationEnd { camera, source });
+        snap_to_orbit(
+            &mut commands,
+            &mut panorbit,
+            SnapOrbit {
+                focus:  fit.focus,
+                yaw:    Some(yaw),
+                pitch:  Some(pitch),
+                radius: fit.radius,
+            },
+            |commands| {
+                let source = AnimationSource::AnimateToFit;
+                commands.trigger(AnimationBegin { camera, source });
+                commands.trigger(AnimationEnd { camera, source });
+            },
+        );
     }
     // Route fit target updates through a single lifecycle owner.
+    commands.trigger(SetFitTarget::new(camera, target));
+}
+
+/// Observer for `LookAt` event — rotates the camera in place to look at a target entity.
+/// The camera stays at its current world position; only the orbit pivot re-anchors.
+pub fn on_look_at(
+    event: On<LookAt>,
+    mut commands: Commands,
+    mut camera_query: Query<(&mut PanOrbitCamera, &GlobalTransform)>,
+    global_transform_query: Query<&GlobalTransform>,
+) {
+    let camera = event.camera;
+    let target = event.target;
+    let duration = event.duration;
+    let easing = event.easing;
+
+    let Ok((mut panorbit, cam_transform)) = camera_query.get_mut(camera) else {
+        return;
+    };
+
+    let Ok(target_transform) = global_transform_query.get(target) else {
+        warn!("LookAt: target {target:?} has no GlobalTransform");
+        return;
+    };
+
+    let cam_pos = cam_transform.translation();
+    let target_pos = target_transform.translation();
+
+    if duration > Duration::ZERO {
+        commands.trigger(
+            PlayAnimation::new(
+                camera,
+                [CameraMove::ToPosition {
+                    translation: cam_pos,
+                    focus: target_pos,
+                    duration,
+                    easing,
+                }],
+            )
+            .source(AnimationSource::LookAt),
+        );
+    } else {
+        // Instant path: back-solve orbital params and snap
+        let (yaw, pitch, radius) = orbital_params_from_offset(cam_pos - target_pos);
+        snap_to_orbit(
+            &mut commands,
+            &mut panorbit,
+            SnapOrbit {
+                focus: target_pos,
+                yaw: Some(yaw),
+                pitch: Some(pitch),
+                radius,
+            },
+            |commands| {
+                let source = AnimationSource::LookAt;
+                commands.trigger(AnimationBegin { camera, source });
+                commands.trigger(AnimationEnd { camera, source });
+            },
+        );
+    }
+}
+
+/// Observer for `LookAtAndZoomToFit` event — rotates the camera in place to look at
+/// a target entity and adjusts the radius to frame it, all in one fluid motion.
+/// The yaw and pitch are back-solved from the camera's current world position.
+pub fn on_look_at_and_zoom_to_fit(
+    event: On<LookAtAndZoomToFit>,
+    mut commands: Commands,
+    mut camera_query: Query<(&mut PanOrbitCamera, &Projection, &Camera, &GlobalTransform)>,
+    mesh_query: Query<&Mesh3d>,
+    children_query: Query<&Children>,
+    global_transform_query: Query<&GlobalTransform>,
+    meshes: Res<Assets<Mesh>>,
+) {
+    let camera = event.camera;
+    let target = event.target;
+    let margin = event.margin;
+    let duration = event.duration;
+    let easing = event.easing;
+
+    let Ok((mut panorbit, projection, cam, cam_transform)) = camera_query.get_mut(camera) else {
+        return;
+    };
+
+    let cam_pos = cam_transform.translation();
+
+    // Back-solve yaw/pitch from camera's current position relative to the target.
+    // We need the target's bounds center for this, so we run the fit calculation
+    // with a preliminary yaw/pitch, then refine.
+    let Ok(target_gt) = global_transform_query.get(target) else {
+        warn!("LookAtAndZoomToFit: target {target:?} has no GlobalTransform");
+        return;
+    };
+    let target_pos = target_gt.translation();
+    let (preliminary_yaw, preliminary_pitch, _) = orbital_params_from_offset(cam_pos - target_pos);
+
+    let Some(fit) = prepare_fit_for_target(
+        "LookAtAndZoomToFit",
+        target,
+        preliminary_yaw,
+        preliminary_pitch,
+        margin,
+        projection,
+        cam,
+        &mesh_query,
+        &children_query,
+        &global_transform_query,
+        &meshes,
+    ) else {
+        return;
+    };
+
+    // Recompute yaw/pitch relative to the fit's focus (bounds center), which may
+    // differ slightly from the raw `GlobalTransform` translation.
+    let (yaw, pitch, _) = orbital_params_from_offset(cam_pos - fit.focus);
+
+    if duration > Duration::ZERO {
+        commands.trigger(
+            PlayAnimation::new(
+                camera,
+                [CameraMove::ToOrbit {
+                    focus: fit.focus,
+                    yaw,
+                    pitch,
+                    radius: fit.radius,
+                    duration,
+                    easing,
+                }],
+            )
+            .source(AnimationSource::LookAtAndZoomToFit),
+        );
+    } else {
+        snap_to_orbit(
+            &mut commands,
+            &mut panorbit,
+            SnapOrbit {
+                focus:  fit.focus,
+                yaw:    Some(yaw),
+                pitch:  Some(pitch),
+                radius: fit.radius,
+            },
+            |commands| {
+                let source = AnimationSource::LookAtAndZoomToFit;
+                commands.trigger(AnimationBegin { camera, source });
+                commands.trigger(AnimationEnd { camera, source });
+            },
+        );
+    }
+
     commands.trigger(SetFitTarget::new(camera, target));
 }
 
