@@ -28,6 +28,7 @@ bevy_panorbit_camera = "0.34.0"
 name = "extras"
 
 [dev-dependencies]
+bevy = { version = "0.18.1", features = ["default"] }
 bevy_panorbit_camera_ext = { path = ".", features = ["visualization"] }
 bevy_brp_extras = "0.18.7"
 bevy_window_manager = "0.18.3"
