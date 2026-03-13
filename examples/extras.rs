@@ -225,7 +225,7 @@ fn main() {
             }),
             PanOrbitCameraPlugin,
             PanOrbitCameraExtPlugin,
-            MeshPickingPlugin,
+            PickingPlugin,
             BrpExtrasPlugin::default(),
             WindowManagerPlugin,
         ))

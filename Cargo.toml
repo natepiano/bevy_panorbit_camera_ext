@@ -5,7 +5,14 @@ edition = "2024"
 
 [features]
 default = []
-visualization = ["bevy/bevy_gizmos", "bevy/bevy_text", "bevy/bevy_ui"]
+visualization = [
+  "bevy/bevy_gizmos",
+  "bevy/bevy_pbr",
+  "bevy/bevy_picking",
+  "bevy/bevy_state",
+  "bevy/bevy_text",
+  "bevy/bevy_ui",
+]
 
 [dependencies]
 bevy = { version = "0.18.1", default-features = false, features = [
