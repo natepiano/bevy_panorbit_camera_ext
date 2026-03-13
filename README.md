@@ -1,5 +1,7 @@
 # bevy_panorbit_camera_ext
 
+[![CI](https://github.com/natepiano/bevy_panorbit_camera_ext/actions/workflows/ci.yml/badge.svg)](https://github.com/natepiano/bevy_panorbit_camera_ext/actions/workflows/ci.yml)
+
 <img src="assets/extras.gif" alt="Zoom-to-fit extras" width="600">
 
 Extension library for [`bevy_panorbit_camera`](https://github.com/Plonq/bevy_panorbit_camera) providing camera animation, zoom-to-fit, and helper utilities.
