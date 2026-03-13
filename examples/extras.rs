@@ -43,6 +43,7 @@ use bevy_panorbit_camera_ext::ZoomBegin;
 use bevy_panorbit_camera_ext::ZoomCancelled;
 use bevy_panorbit_camera_ext::ZoomEnd;
 use bevy_panorbit_camera_ext::ZoomToFit;
+use bevy_window_manager::ManagedWindow;
 use bevy_window_manager::WindowManagerPlugin;
 
 // durations
@@ -619,10 +620,15 @@ fn toggle_second_window(
     }
 
     let window = commands
-        .spawn(Window {
-            title: "extras - window 2".into(),
-            ..default()
-        })
+        .spawn((
+            Window {
+                title: "extras - window 2".into(),
+                ..default()
+            },
+            ManagedWindow {
+                window_name: "window_2".into(),
+            },
+        ))
         .id();
 
     // Clone settings from primary camera
@@ -867,7 +873,9 @@ fn look_at_hovered(
     mut commands: Commands,
     hovered: Res<HoveredEntity>,
     scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
     active_easing: Res<ActiveEasing>,
+    windows: Query<&Window>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyF) {
         return;
@@ -875,8 +883,11 @@ fn look_at_hovered(
     let Some(target) = hovered.0 else {
         return;
     };
+    let Some(cam) = focused_camera(&scene, second.as_deref(), &windows) else {
+        return;
+    };
     commands.trigger(
-        LookAt::new(scene.camera, target)
+        LookAt::new(cam, target)
             .duration(Duration::from_millis(LOOK_AT_DURATION_MS))
             .easing(active_easing.0),
     );
@@ -887,7 +898,9 @@ fn look_at_and_zoom_to_fit_hovered(
     mut commands: Commands,
     hovered: Res<HoveredEntity>,
     scene: Res<SceneEntities>,
+    second: Option<Res<SecondWindowEntities>>,
     active_easing: Res<ActiveEasing>,
+    windows: Query<&Window>,
 ) {
     if !keyboard.just_pressed(KeyCode::KeyG) {
         return;
@@ -895,8 +908,11 @@ fn look_at_and_zoom_to_fit_hovered(
     let Some(target) = hovered.0 else {
         return;
     };
+    let Some(cam) = focused_camera(&scene, second.as_deref(), &windows) else {
+        return;
+    };
     commands.trigger(
-        LookAtAndZoomToFit::new(scene.camera, target)
+        LookAtAndZoomToFit::new(cam, target)
             .margin(ZOOM_MARGIN_MESH)
             .duration(Duration::from_millis(LOOK_AT_DURATION_MS))
             .easing(active_easing.0),
