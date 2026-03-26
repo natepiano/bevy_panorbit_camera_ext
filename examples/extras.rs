@@ -399,6 +399,7 @@ fn setup(
                 modifier_pan:  Some(KeyCode::ShiftLeft),
                 modifier_zoom: Some(KeyCode::ControlLeft),
             },
+            trackpad_sensitivity: 0.5,
             trackpad_pinch_to_zoom_enabled: true,
             yaw: Some(CAMERA_START_YAW),
             pitch: Some(CAMERA_START_PITCH),
@@ -776,6 +777,9 @@ fn on_mesh_clicked(
     active_easing: Res<ActiveEasing>,
     time: Res<Time<Virtual>>,
 ) {
+    if click.button != PointerButton::Primary {
+        return;
+    }
     if time.is_paused() {
         return;
     }
@@ -802,6 +806,9 @@ fn on_ground_clicked(
     active_easing: Res<ActiveEasing>,
     time: Res<Time<Virtual>>,
 ) {
+    if click.button != PointerButton::Primary {
+        return;
+    }
     if time.is_paused() {
         return;
     }
@@ -826,6 +833,9 @@ fn on_below_clicked(
     active_easing: Res<ActiveEasing>,
     time: Res<Time<Virtual>>,
 ) {
+    if click.button != PointerButton::Primary {
+        return;
+    }
     if time.is_paused() {
         return;
     }
