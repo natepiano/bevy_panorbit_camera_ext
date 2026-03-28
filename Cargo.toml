@@ -29,12 +29,7 @@ name = "extras"
 
 [dev-dependencies]
 bevy = { version = "0.18.1", features = ["default"] }
-bevy_panorbit_camera_ext = { features = [
-  "visualization",
-], path = "." }
+bevy_panorbit_camera_ext = { features = ["visualization"], path = "." }
 bevy_brp_extras = "0.19.0"
 bevy_window_manager = "0.19.0"
 bevy_panorbit_camera = "0.34.0"
-
-[[example]]
-name = "degenerate"
